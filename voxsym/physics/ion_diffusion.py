@@ -18,6 +18,7 @@ from typing import Tuple, Optional
 from voxsym.voxel import Voxel
 from voxsym.voxsym import VoxSym
 from voxsym.constants import ELEMENTARY_CHARGE, BOLTZMANN_CONSTANT
+from voxsym.physics.topology import GridTopology
 
 
 class IonDiffusion:
@@ -32,6 +33,10 @@ class IonDiffusion:
 
     def __init__(self, voxsym: VoxSym):
         self.voxsym = voxsym
+
+        # Shared topology cache; rebuilt when the voxel grid changes.
+        self._topology: Optional[GridTopology] = None
+        self._topology_voxel_count = -1
 
         # Edge-list format
         self._edge_src = None    # (E,) int32
@@ -55,61 +60,50 @@ class IonDiffusion:
         self._temperature = 300.0  # K
         self._built = False
 
+        # Charge conservation / source control
+        self.conserve_charge = False
+        self.charge_source_per_step = None  # optional (N,) array [C/s]
+        self.conserved_total = True         # when True, enforce ΣQ = const
+        self._last_dQdt = None              # flux divergence from last step
+
     # ------------------------------------------------------------------
     # Build flat arrays from voxel grid (once)
     # ------------------------------------------------------------------
 
     def _build_arrays(self):
-        if self._built:
+        if self._built and self._topology_voxel_count == len(self.voxsym.get_voxels()):
             return
+
         voxels = self.voxsym.get_voxels()
         n = len(voxels)
         if n == 0:
+            self._topology = GridTopology([])
+            self._topology_voxel_count = 0
+            self._edge_src = self._topology.edges_src
+            self._edge_dst = self._topology.edges_dst
+            self._edge_axis = self._topology.edges_axis
+            self._edge_sign = self._topology.edges_sign
+            self._D = np.array([], dtype=np.float64)
+            self._z = np.array([], dtype=np.int32)
+            self._dx = np.array([], dtype=np.float64)
+            self._conc_max = np.array([], dtype=np.float64)
+            self._partition = np.array([], dtype=np.float64)
+            self._interface_capacity = np.array([], dtype=np.float64)
+            self._adsorption_rate = np.array([], dtype=np.float64)
+            self._desorption_rate = np.array([], dtype=np.float64)
+            self._material_name = np.array([], dtype=object)
+            self._interface_area = np.array([], dtype=np.float64)
+            self._interface_conc = np.array([], dtype=np.float64)
             self._built = True
             return
 
-        # --- coordinate map ---
-        coord_to_idx = {}
-        for idx, v in enumerate(voxels):
-            key = (
-                int(round(v.x / v.size)),
-                int(round(v.y / v.size)),
-                int(round(v.z / v.size)),
-            )
-            coord_to_idx[key] = idx
-
-        # --- edge list with axis & sign ---
-        # (dx, dy, dz) → (axis, sign)
-        dirs = [
-            ((1, 0, 0),  0,  1),
-            ((-1, 0, 0), 0, -1),
-            ((0, 1, 0),  1,  1),
-            ((0, -1, 0), 1, -1),
-            ((0, 0, 1),  2,  1),
-            ((0, 0, -1), 2, -1),
-        ]
-        src_list = []
-        dst_list = []
-        axis_list = []
-        sign_list = []
-        for idx, v in enumerate(voxels):
-            base = (
-                int(round(v.x / v.size)),
-                int(round(v.y / v.size)),
-                int(round(v.z / v.size)),
-            )
-            for (dx_, dy_, dz_), axis, sign in dirs:
-                nkey = (base[0] + dx_, base[1] + dy_, base[2] + dz_)
-                if nkey in coord_to_idx:
-                    src_list.append(idx)
-                    dst_list.append(coord_to_idx[nkey])
-                    axis_list.append(axis)
-                    sign_list.append(sign)
-
-        self._edge_src = np.array(src_list, dtype=np.int32)
-        self._edge_dst = np.array(dst_list, dtype=np.int32)
-        self._edge_axis = np.array(axis_list, dtype=np.int8)
-        self._edge_sign = np.array(sign_list, dtype=np.float64)
+        # --- shared topology ---
+        self._topology = GridTopology(voxels, connectivity=6)
+        self._topology_voxel_count = n
+        self._edge_src = self._topology.edges_src
+        self._edge_dst = self._topology.edges_dst
+        self._edge_axis = self._topology.edges_axis
+        self._edge_sign = self._topology.edges_sign
 
         # --- material arrays ---
         self._D = np.zeros(n, dtype=np.float64)
@@ -144,7 +138,7 @@ class IonDiffusion:
         # so the total area per voxel equals the sum of its distinct faces.
         src = self._edge_src
         dst = self._edge_dst
-        if src is not None:
+        if src is not None and len(src) > 0:
             dx_src = self._dx[src]
             dx_dst = self._dx[dst]
             face_area = np.minimum(dx_src * dx_src, dx_dst * dx_dst)
@@ -187,10 +181,6 @@ class IonDiffusion:
             v.interface_concentration = float(self._interface_conc[i])
 
         return new_conc
-
-    # ------------------------------------------------------------------
-    # Vectorized transport kernel
-    # ------------------------------------------------------------------
 
     def _transport_step(
         self, conc: np.ndarray, E_field: np.ndarray, dt: float,
@@ -290,7 +280,75 @@ class IonDiffusion:
                 gamma_max[active_interface],
             )
 
+        # Store the divergence of ionic flux for optional charge conservation.
+        # dC/dt from transport (excluding sources) is dC_fick + dC_mig + dC_ads.
+        self._last_dQdt = dC_fick + dC_mig + dC_ads
+
         return conc + dt * (dC_fick + dC_mig + dC_ads)
+
+    def pending_charge_update(self, dt: Optional[float] = None) -> np.ndarray:
+        """Return updated voxel charges from ionic flux divergence.
+
+        Total charge is conserved in the absence of explicit charge sources:
+        the sum of ``dQ = z · F · dC`` over the grid is zero up to floating
+        point round-off because every ion that leaves one voxel enters a
+        neighbor.  An optional per-voxel charge source (or sink) can be
+        added via ``charge_source_per_step`` [C/s].
+        """
+        self._build_arrays()
+        voxels = self.voxsym.get_voxels()
+        n = len(voxels)
+        if dt is None:
+            dt = self.voxsym.get_time_step()
+
+        charges = np.array([v.charge for v in voxels], dtype=np.float64)
+        z = self._z.astype(np.float64)
+        F = 96485.33212  # Faraday constant [C/mol]
+
+        if self._last_dQdt is None:
+            dQdt = np.zeros(n, dtype=np.float64)
+        else:
+            dQdt = z * F * self._last_dQdt
+
+        # Add optional explicit source/sink [C/s].
+        if self.charge_source_per_step is not None:
+            source = np.asarray(self.charge_source_per_step, dtype=np.float64)
+            if len(source) == n:
+                dQdt = dQdt + source
+
+        new_charges = charges + dt * dQdt
+
+        # If strict total conservation is requested and no source is present,
+        # remove any global drift introduced by round-off.
+        if self.conserved_total and self.charge_source_per_step is None:
+            total_before = float(charges.sum())
+            drift = float(new_charges.sum()) - total_before
+            if n > 0 and abs(drift) > 1e-24:
+                new_charges -= drift / n
+
+        return new_charges
+
+    # ------------------------------------------------------------------
+    # Charge conservation helpers
+    # ------------------------------------------------------------------
+
+    def set_charge_source(self, source_per_step: Optional[np.ndarray] = None):
+        """Set an optional per-voxel charge source/sink [C/s]."""
+        if source_per_step is not None:
+            source_per_step = np.asarray(source_per_step, dtype=np.float64)
+        self.charge_source_per_step = source_per_step
+
+    def set_conserve_charge(self, enabled: bool = True, conserved_total: bool = True):
+        """Enable / disable charge conservation from ion transport.
+
+        Args:
+            enabled: When True, ``compute_step`` records ionic flux
+                divergence and ``VoxSym.update()`` will update voxel charges.
+            conserved_total: When True and no charge source is set, enforce
+                zero net drift by subtracting the average round-off error.
+        """
+        self.conserve_charge = bool(enabled)
+        self.conserved_total = bool(conserved_total)
 
     # ------------------------------------------------------------------
     # Convenience

@@ -8,6 +8,8 @@ import threading
 import numpy as np
 from typing import Optional
 
+from voxsym.physics.topology import GridTopology
+
 
 def _decode_name(name) -> str:
     """Handle both str and bytes stored in .npz arrays."""
@@ -29,14 +31,19 @@ class VoxSym:
     """Main class for voxel-based physics simulation and visualization.
 
     Owns the voxel grid, all physics solvers (heat, ion, EM), the
-    renderer, visualizer, GUI, and the viser server.  The user only
-    needs to instantiate this class — nothing else.
+    optional renderer/visualizer/GUI, and the WebGL server.  The user
+    only needs to instantiate this class.
 
     The render scale is inferred automatically from voxel sizes so
     that nanoscale grids are visible without manual scaling.
 
     Args:
-        port: Port for the internal viser server (default 8080).
+        port: Port for the internal WebGL server (default 8080).
+        host: Host to bind the server to (default "0.0.0.0").
+        backend: "webgl" for the browser-based WebGL backend, or None
+            for headless simulation (no renderer/GUI). Defaults to "webgl".
+        enable_recorder: Whether to enable the simulation recorder.
+        enable_player: Whether to enable the legacy external player.
     """
 
     # Layer name constants (mirror visualizer.Layer for convenience)
@@ -48,33 +55,65 @@ class VoxSym:
     LAYER_MATERIAL = "material"
     LAYER_ION_CONCENTRATION = "ion_concentration"
 
-    def __init__(self, port: int = 8080, *,
+    def __init__(self, port: int = 8080, *, host: str = "0.0.0.0",
+                 backend: Optional[str] = "webgl",
                  enable_recorder: bool = True,
                  enable_player: bool = True):
         self.voxels = []
         self.space_resolution = 1.0
         self.time_step = 0.1
 
+        # Explicit time-step safety factor.  ``max_stable_dt()`` returns
+        # the raw CFL cap; every call to ``step_and_update(dt)`` compares
+        # against ``dt_safety_factor * max_stable_dt()`` and warns/clamps.
+        self.dt_safety_factor = 0.5
+
         # Render scale — auto-computed from voxel sizes on first use.
         # Set manually to override:  vs.render_scale = 1e9
         self._render_scale = None
 
-        # Viser server (created eagerly so the user can add custom
-        # GUI elements before calling setup_gui).
-        import viser
-        self._server = viser.ViserServer(port=port)
+        # Backend selection (WebGL or headless)
+        self._backend_name = backend
+        self._server = None
+        self._webgl_server = None
+        if backend == "viser":
+            raise RuntimeError(
+                "The Viser backend has been removed. "
+                "Use backend='webgl' (default) for the browser-based viewer, "
+                "or backend=None for headless simulation."
+            )
+        elif backend == "webgl":
+            try:
+                from voxsym.web.server import WebGLServer
+                from voxsym.visualization.backends.webgl_backend import WebGLBackend
+            except ImportError as exc:
+                raise RuntimeError(
+                    "WebGL backend requires tornado and websockets. "
+                    "Install them with 'pip install tornado websockets'."
+                ) from exc
+            self._webgl_server = WebGLServer(self, host=host, port=port)
+            self._webgl_server.start()
+            self._server = self._webgl_server
+            self._webgl_backend = WebGLBackend(self, self._webgl_server, self.render_scale)
+        elif backend is not None:
+            raise ValueError(f"Unknown backend: {backend!r}. Use 'webgl' or None.")
 
         # Internal components (lazy initialization)
         self._heat_solver = None
         self._ion_solver = None
         self._em_solver = None
+        self._poisson_solver = None
         self._renderer = None
         self._visualizer = None
         self._gui = None
 
+        # Poisson solver control
+        self._enable_poisson = False
+
         # Pending simulation state (compute → update two-phase pattern)
         self._pending_temps: Optional[np.ndarray] = None
         self._pending_conc: Optional[np.ndarray] = None
+        self._pending_charge: Optional[np.ndarray] = None
 
         # Recording (on by default)
         self._recorder = None
@@ -95,6 +134,7 @@ class VoxSym:
 
         # Elapsed simulation time (used for recording timestamps)
         self._elapsed_time = 0.0
+        self._frame_index = 0
 
         # Callback hooks for the simulation loop
         self._on_start_callbacks: list = []
@@ -116,9 +156,13 @@ class VoxSym:
         self._playback_frame_accum = 0.0
         self._playback_last_time = 0.0
 
-        # Thread safety: voxel grid is mutated by upload callbacks and read by
-        # the main loop / renderer.  Use a lock for all mutations.
         self._voxels_lock = threading.Lock()
+
+        # Shared voxel-grid topology cache.  Solvers keep their own
+        # references, but the canonical topology lives here and is rebuilt
+        # whenever voxels are added/removed or the grid is loaded.
+        self._topology: Optional[GridTopology] = None
+        self._topology_voxel_count = 0
 
         # Simulation control flags (driven by GUI play/pause/stop buttons)
         self._simulation_running = True
@@ -205,9 +249,17 @@ class VoxSym:
         if self._playback_mode:
             self._playback_playing = False
 
+    def is_playing(self) -> bool:
+        """Return True if the simulation is currently stepping."""
+        return not self._simulation_paused
+
     def stop(self):
         """Signal the simulation loop to exit."""
         self._simulation_running = False
+
+    def is_playing(self) -> bool:
+        """Return whether the simulation is currently playing (not paused)."""
+        return self._simulation_running and not self._simulation_paused
 
     def reset_simulation(self):
         """Reset simulation control flags to their initial state."""
@@ -257,6 +309,7 @@ class VoxSym:
                 v.optical_intensity = state["optical_intensity"][i]
         # Reset elapsed time and clear pending state
         self._elapsed_time = 0.0
+        self._frame_index = 0
         self._pending_temps = None
         self._pending_conc = None
 
@@ -318,6 +371,7 @@ class VoxSym:
                             for _ in range(self._steps_per_frame):
                                 self.apply_em_fields(t=self._elapsed_time)
                                 self.step_and_update(step_dt)
+                        self._frame_index += 1
 
                         # GUI update callbacks run after every frame
                         for cb in self._on_gui_update_callbacks:
@@ -344,10 +398,11 @@ class VoxSym:
 
     @property
     def server(self):
-        """The internal ``viser.ViserServer`` instance.
+        """The internal ``WebGLServer`` instance.
 
-        Use this to add custom GUI elements (markdown displays,
-        extra buttons, etc.) after calling ``setup_gui()``.
+        Use this to access the HTTP/WebSocket server (for example, to
+        print the viewer URL).  Custom GUI controls should be added in the
+        browser-side JavaScript instead of here.
         """
         return self._server
 
@@ -395,17 +450,60 @@ class VoxSym:
             self._em_solver = ElectromagneticSolver()
         return self._em_solver
 
+    def _ensure_poisson_solver(self):
+        if self._poisson_solver is None:
+            from voxsym.physics import poisson as _poisson_module
+            self._poisson_solver = _poisson_module
+        return self._poisson_solver
+
+    def solve_poisson(self, max_iter: int = 500, tol: float = 1e-6):
+        """Solve Poisson's equation from current voxel charges.
+
+        Computes the electric potential φ from  ∇²φ = −ρ/ε  and stores
+        the resulting electric field ``E = −∇φ`` on every voxel, plus the
+        scalar potential as ``voxel.phi``.  The solver uses Neumann boundary
+        conditions (zero normal derivative) on the outer surface of the
+        voxel cloud.
+
+        Args:
+            max_iter: Maximum Jacobi iterations.
+            tol: Convergence tolerance on max |Δφ|.
+        """
+        self._ensure_poisson_solver().solve_potential_from_charge(
+            self, max_iter=max_iter, tol=tol,
+        )
+
+    def set_enable_poisson(self, enabled: bool = True):
+        """Enable / disable automatic Poisson solve per step.
+
+        When enabled, ``step_and_update()`` solves ∇²φ = −ρ/ε from the
+        current voxel charges and overwrites ``voxel.electric_field`` with
+        ``E = −∇φ`` *before* the ion transport step.  This couples ionic
+        charge density to the electric field self-consistently.
+
+        Disabled by default so existing examples keep their prescribed
+        fields.
+        """
+        self._enable_poisson = bool(enabled)
+
+    @property
+    def enable_poisson(self) -> bool:
+        """True if the Poisson solver is automatically run each step."""
+        return self._enable_poisson
+
     def _ensure_renderer(self):
         if self._renderer is None:
             from voxsym.visualization.renderer import Renderer
-            self._renderer = Renderer(self, self.render_scale)
+            backend = getattr(self, "_webgl_backend", None)
+            self._renderer = Renderer(self, backend=backend, render_scale=self.render_scale)
         return self._renderer
 
     def _ensure_visualizer(self):
         if self._visualizer is None:
             from voxsym.visualization.visualizer import Visualizer
+            # Visualizer is still useful for scalar layer logic and arrow computation.
             self._visualizer = Visualizer(
-                self._server, self, self._ensure_renderer()
+                self._webgl_server, self, self._ensure_renderer()
             )
         return self._visualizer
 
@@ -423,10 +521,20 @@ class VoxSym:
         Args:
             dt: Simulation time-step [s].  Uses ``self.time_step`` if None.
         """
+        # Optional Poisson solve: compute E from charge density before ions move.
+        if self._enable_poisson:
+            self.solve_poisson()
+
         self._ensure_heat_solver()
         self._ensure_ion_solver()
         self._pending_temps = self._heat_solver.compute_step(dt)
         self._pending_conc = self._ion_solver.compute_step(dt)
+
+        # Optional charge conservation update from ionic flux.
+        if self._ion_solver.conserve_charge:
+            self._pending_charge = self._ion_solver.pending_charge_update(dt)
+        else:
+            self._pending_charge = None
 
     def update(self):
         """Write the computed temperatures and concentrations back to all voxels.
@@ -447,6 +555,11 @@ class VoxSym:
                 v.ion_concentration = float(self._pending_conc[i])
             self._pending_conc = None
 
+        if self._pending_charge is not None:
+            for i, v in enumerate(self.voxels):
+                v.charge = float(self._pending_charge[i])
+            self._pending_charge = None
+
         # Record this updated state if recording is enabled.
         if self._recorder is not None:
             self._recorder.record(self._elapsed_time)
@@ -455,12 +568,72 @@ class VoxSym:
         """Run ``step_simulation(dt)`` followed immediately by ``update()``.
 
         Also increments the elapsed clock used for recording timestamps.
+
+        If *dt* exceeds the stable time-step cap multiplied by
+        ``self.dt_safety_factor``, a ``RuntimeWarning`` is emitted and *dt*
+        is clamped to the safe value.  Set ``dt_safety_factor = 1.0`` if you
+        want to allow the raw CFL cap.
         """
         if dt is None:
             dt = self.time_step
+        dt = self._clamp_dt(dt)
         self.step_simulation(dt)
         self._elapsed_time += dt
         self.update()
+
+    def _clamp_dt(self, dt: float) -> float:
+        """Warn and clamp *dt* if it exceeds the safe limit."""
+        dt = float(dt)
+        if dt <= 0:
+            return dt
+        try:
+            cap = self.max_stable_dt()
+        except Exception:
+            # If solvers are not yet built or max_stable_dt fails for any
+            # reason, fall back to the user-provided value rather than crash.
+            return dt
+        if not np.isfinite(cap) or cap <= 0:
+            return dt
+        safe = self.dt_safety_factor * cap
+        if dt > safe:
+            import warnings
+            warnings.warn(
+                f"dt={dt:g} exceeds safe limit {safe:g} "
+                f"(safety_factor={self.dt_safety_factor}, cap={cap:g}); "
+                f"clamping to {safe:g}.",
+                RuntimeWarning,
+                stacklevel=3,
+            )
+            return safe
+        return dt
+
+    def max_stable_dt(self) -> float:
+        """Return the most restrictive stable dt across enabled solvers.
+
+        This is the raw CFL cap from ``stability.py``.  The safety factor
+        is applied separately in ``step_and_update``.
+        """
+        from voxsym.physics.stability import (
+            max_stable_dt_for_heat_solver,
+            max_stable_dt_for_ion_solver,
+        )
+
+        self._ensure_heat_solver()
+        self._ensure_ion_solver()
+
+        # Make sure the solvers have built their internal material arrays from
+        # the current voxel grid before asking for a stability cap.
+        self._heat_solver._build_arrays()
+        self._ion_solver._build_arrays()
+
+        heat_dt = max_stable_dt_for_heat_solver(self._heat_solver)
+        ion_dt = max_stable_dt_for_ion_solver(self._ion_solver)
+
+        caps = [heat_dt, ion_dt]
+        finite_caps = [c for c in caps if np.isfinite(c) and c > 0]
+        if not finite_caps:
+            return float("inf")
+        return float(min(finite_caps))
 
     # ==================================================================
     # Heat source / boundary configuration
@@ -614,6 +787,51 @@ class VoxSym:
     # Camera  (scaling-aware)
     # ==================================================================
 
+    def setup_gui(self):
+        """Create standard GUI panels and callbacks.
+
+        For the WebGL backend this is a no-op: controls live in the
+        browser sidebar.  The method prints the viewer URL and ensures
+        the renderer/visualizer are ready.
+
+        Returns:
+            VoxSymGUI instance (no-op, for backwards compatibility).
+        """
+        self._ensure_renderer()
+        self._ensure_visualizer()
+        from voxsym.visualization.gui import VoxSymGUI
+        self._gui = VoxSymGUI(self, self._server)
+        url = f"http://{self._server.host}:{self._server.port}" if self._server else None
+        if url:
+            print(f"WebGL viewer: {url}")
+        return self._gui
+
+    # ==================================================================
+    # Rendering
+    # ==================================================================
+
+    def render(self):
+        """Render the current state (voxels + active overlay layers).
+
+        Reads GUI control values (cross-section, opacity) and applies
+        them automatically.  Also advances the optional player replay
+        if it has been launched.  Call once per frame in the main loop.
+        """
+        if self._gui is not None:
+            self._gui.sync()
+        # The visualizer still computes scalar layers and vector arrows; make sure it exists.
+        if self._visualizer is None:
+            self._ensure_visualizer()
+        if self._visualizer is not None:
+            self._visualizer.render()
+        # For the WebGL backend, broadcast the rendered frame to clients.
+        if self._backend_name == "webgl" and self._webgl_server is not None:
+            payload = self._webgl_backend.get_latest_payload()
+            self._webgl_server.broadcast_frame(payload)
+        # Keep the player in sync with the running simulation.
+        if self._player is not None:
+            self._feed_player()
+
     def auto_camera(self, distance_factor: float = 1.5):
         """Position the camera to frame the entire voxel grid.
 
@@ -625,6 +843,8 @@ class VoxSym:
         Args:
             distance_factor: Multiplier for camera distance.
         """
+        if self._server is None:
+            return
         if not self.voxels:
             return
 
@@ -643,53 +863,11 @@ class VoxSym:
         diag = np.sqrt(dx * dx + dy * dy + dz * dz)
         dist = max(diag * distance_factor, 1e-6)
 
-        self._server.initial_camera.position = (
-            cx + dist * 0.6,
-            cy + dist * 0.4,
-            cz + dist * 0.6,
-        )
-        self._server.initial_camera.look_at = (cx, cy, cz)
-
-    # ==================================================================
-    # GUI setup
-    # ==================================================================
-
-    def setup_gui(self):
-        """Create standard GUI panels and callbacks.
-
-        This initialises the internal renderer, visualizer, and a
-        ``VoxSymGUI`` instance that owns all button/slider callbacks.
-        Must be called before ``render()``.
-
-        Returns:
-            VoxSymGUI instance (for advanced customization).
-        """
-        self._ensure_renderer()
-        self._ensure_visualizer()
-        from voxsym.visualization.gui import VoxSymGUI
-        self._gui = VoxSymGUI(self, self._server)
-        return self._gui
-
-    # ==================================================================
-    # Rendering
-    # ==================================================================
-
-    def render(self):
-        """Render the current state (voxels + active overlay layers).
-
-        Reads GUI control values (cross-section, opacity) and applies
-        them automatically.  Also advances the optional player replay
-        if it has been launched.  Call once per frame in the main loop.
-        """
-        if self._gui is not None:
-            self._gui.sync()
-        if self._visualizer is not None:
-            self._visualizer.render()
-            if self._renderer is not None and self._renderer.handle is not None:
-                self._renderer.handle.opacity = self._gui.opacity
-        # Keep the player in sync with the running simulation.
-        if self._player is not None:
-            self._feed_player()
+        if hasattr(self._server, "set_initial_camera"):
+            self._server.set_initial_camera(
+                position=(cx + dist * 0.6, cy + dist * 0.4, cz + dist * 0.6),
+                look_at=(cx, cy, cz),
+            )
 
     # ==================================================================
     # Layer management  (delegates to internal Visualizer)
@@ -702,17 +880,23 @@ class VoxSym:
             name: Layer name (use ``Layer.ELECTRIC_FIELD`` etc.).
             active: True to show, False to hide.
         """
+        if self._visualizer is None:
+            self._ensure_visualizer()
         if self._visualizer is not None:
             self._visualizer.set_layer(name, active)
 
     def toggle_layer(self, name: str) -> bool:
         """Flip a layer's state.  Returns the new state."""
+        if self._visualizer is None:
+            self._ensure_visualizer()
         if self._visualizer is not None:
             return self._visualizer.toggle_layer(name)
         return False
 
     def reset_layers(self):
         """Reset to base colour layer, removing all overlays."""
+        if self._visualizer is None:
+            self._ensure_visualizer()
         if self._visualizer is not None:
             self._visualizer.remove_all_overlays()
 
@@ -722,9 +906,12 @@ class VoxSym:
 
     @property
     def opacity(self) -> float:
-        """Global opacity value (0–1).  Reads from the GUI slider."""
+        """Global opacity value (0–1)."""
         if self._gui is not None:
             return self._gui.opacity
+        backend = getattr(self, "_webgl_backend", None)
+        if backend is not None:
+            return getattr(backend, "_opacity", 1.0)
         return 1.0
 
     @opacity.setter
@@ -732,6 +919,9 @@ class VoxSym:
         """Set the global opacity slider value."""
         if self._gui is not None:
             self._gui.set_opacity(value)
+        backend = getattr(self, "_webgl_backend", None)
+        if backend is not None and hasattr(backend, "set_opacity"):
+            backend.set_opacity(value)
 
     # ==================================================================
     # Visualizer settings  (convenience properties)
@@ -798,10 +988,16 @@ class VoxSym:
         """Elapsed simulation time [s] for the current session."""
         return self._elapsed_time
 
+    @property
+    def frame_index(self) -> int:
+        """Number of rendered frames since start/reset."""
+        return getattr(self, "_frame_index", 0)
+
     def reset_elapsed_time(self):
         """Reset the elapsed simulation clock (and player frame counter)."""
         self._elapsed_time = 0.0
         self._player_frame_counter = 0
+        self._frame_index = 0
 
     # ==================================================================
     # Player integration (legacy: opens a second port)
@@ -969,13 +1165,11 @@ class VoxSym:
         # Swap the grid and reset the renderer under a brief lock.
         with self._voxels_lock:
             self.voxels = new_voxels
+            self._topology = None
+            self._topology_voxel_count = len(new_voxels)
             if self._renderer is not None:
-                if self._renderer.handle is not None:
-                    try:
-                        self._renderer.handle.remove()
-                    except Exception:
-                        pass
-                self._renderer._handle = None
+                if self._renderer.backend is not None:
+                    self._renderer.backend.clear()
             if self._visualizer is not None:
                 self._visualizer.remove_all_overlays()
 
@@ -987,12 +1181,6 @@ class VoxSym:
         # the user sees the playback instead of a static mesh.
         if self._visualizer is not None:
             self._select_playback_layer()
-
-        # Refresh playback GUI on the event loop only if requested.
-        if refresh_gui and self._gui is not None:
-            self._gui._refresh_playback_controls(
-                self._playback_num_frames, self._playback_current_frame
-            )
 
     def _select_playback_layer(self):
         """Activate a scalar layer that changes across the loaded recording."""
@@ -1081,13 +1269,6 @@ class VoxSym:
             self._apply_playback_frame(self._playback_current_frame)
             if self._playback_current_frame >= self._playback_num_frames - 1:
                 self._playback_playing = False
-
-        # Sync GUI if available.
-        if self._gui is not None:
-            self._gui._sync_playback_frame(
-                self._playback_current_frame, self._playback_num_frames,
-                float(self._playback_data["times"][self._playback_current_frame])
-            )
 
     def _fmt_time(self, t: float) -> str:
         """Human-readable time formatting."""
@@ -1235,6 +1416,54 @@ class VoxSym:
     def add_voxel(self, voxel):
         with self._voxels_lock:
             self.voxels.append(voxel)
+        self._invalidate_topology()
+
+    def remove_voxel(self, voxel):
+        """Remove the first occurrence of *voxel* from the live grid."""
+        with self._voxels_lock:
+            try:
+                self.voxels.remove(voxel)
+            except ValueError:
+                return
+        self._invalidate_topology()
+
+    def build_grid(self, voxels):
+        """Replace the entire voxel grid with *voxels* (a list of Voxel).
+
+        This is the preferred way to load geometry in scripts that do not
+        call ``add_voxel`` one-by-one.  It also invalidates the shared
+        topology cache.
+        """
+        with self._voxels_lock:
+            self.voxels = list(voxels)
+        self._invalidate_topology()
+
+    def _invalidate_topology(self):
+        """Mark the shared topology cache as stale.
+
+        The next physics step will rebuild the solvers' internal arrays.
+        Calling this after every ``add_voxel`` is inexpensive because the
+        actual arrays are built lazily inside ``compute_step``.
+        """
+        self._topology = None
+        self._topology_voxel_count = 0
+        if self._heat_solver is not None:
+            self._heat_solver._built = False
+            self._heat_solver._topology_voxel_count = -1
+        if self._ion_solver is not None:
+            self._ion_solver._built = False
+            self._ion_solver._topology_voxel_count = -1
+
+    def get_topology(self):
+        """Return the cached ``GridTopology`` for the current voxel grid.
+
+        The topology is rebuilt automatically if the voxel count changed.
+        """
+        n = len(self.get_voxels())
+        if self._topology is None or self._topology_voxel_count != n:
+            self._topology = GridTopology(self.voxels, connectivity=6)
+            self._topology_voxel_count = n
+        return self._topology
 
     def get_voxels(self):
         """Return the live voxel list (snapshot under lock)."""
@@ -1246,4 +1475,3 @@ class VoxSym:
 
     def get_time_step(self):
         return self.time_step
-

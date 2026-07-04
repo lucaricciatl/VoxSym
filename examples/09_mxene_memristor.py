@@ -1,13 +1,14 @@
 """
 09 — MXene Memristor
 ====================
-Graphene | H₂SO₄ electrolyte | Ti₃C₂ MXene stack.
+Graphene | H₂SO₄ electrolyte | Ti₃C₂ MXene horizontal stack.
 H⁺ ions in the electrolyte migrate into/out of the MXene under
 an oscillating electric field along X, simulating memristive switching.
 
 Geometry (10 µm voxels):
-  [Gr] [Gr] [H₂SO₄] [H₂SO₄] [MXene] [MXene] [MXene] [MXene] [MXene]
-    2×10×10      2×10×10                5×10×10
+  [Gr] [Gr] [H₂SO₄] [H₂SO₄] [H₂SO₄] [MXene] [MXene] [MXene] [MXene] [MXene]
+    2×10×10          3×10×10                    5×10×10
+All layers sit flat on the grid floor (z = 0..GRID_Z-1).
 """
 
 import time
@@ -31,6 +32,7 @@ def _fmt_time(t: float) -> str:
         return f"{t*1e6:.2f} µs"
     else:
         return f"{t*1e9:.2f} ns"
+
 
 # ---------------------------------------------------------------------------
 # Materials (literature values)
@@ -83,119 +85,118 @@ GOLD = Material(
     ion_conc_max=0.0,
     color=(255, 215, 0),           # gold
 )
-# ---------------------------------------------------------------------------
-# Build the memristor stack
-# ---------------------------------------------------------------------------
-vs = VoxSym()
 
-GRID_Y = 10
-GRID_Z = 10
-HALF_Y = GRID_Y // 2
-HALF_Z = GRID_Z // 2
-size = 1e-5  # 10 µm
 
-# X layout: graphene (0-1), H₂SO₄ (2-6), MXene (7-11)
-for xi, (x_start, x_end, mat) in enumerate([
-    (0, 2, GRAPHENE),
-    (2, 7, H2SO4_ELECTROLYTE),
-    (7, 12, TI3C2_MXENE),
-]):
-    for x in range(x_start, x_end):
+def build_memristor(backend="webgl", port=8080, host="0.0.0.0"):
+    """Build the horizontal memristor geometry and return a VoxSym instance."""
+    vs = VoxSym(backend=backend, port=port, host=host)
+
+    GRID_X = 10
+    GRID_Y = 10
+    GRID_Z = 10
+    HALF_Y = GRID_Y // 2
+    size = 1e-5  # 10 µm
+
+    # Stack along X, sitting on the base plane z = 0 .. (GRID_Z-1)*size
+    for x_start, x_end, mat in [
+        (0, 2, GRAPHENE),
+        (2, 5, H2SO4_ELECTROLYTE),
+        (5, GRID_X, TI3C2_MXENE),
+    ]:
+        for x in range(x_start, x_end):
+            for y in range(-HALF_Y, HALF_Y):
+                for z in range(0, GRID_Z):
+                    v = Voxel(
+                        x=float(x) * size,
+                        y=float(y) * size,
+                        z=float(z) * size,
+                        size=size,
+                        color=mat.color,
+                    )
+                    v.material = mat
+                    v.temperature = 300.0
+                    if mat is H2SO4_ELECTROLYTE:
+                        v.ion_concentration = 300.0  # 1M
+                    if mat is TI3C2_MXENE:
+                        v.ion_concentration = 0.0
+                    vs.add_voxel(v)
+
+    # Bottom gold electrodes under the left (graphene) and right (MXene) ends
+    for x in range(-2, 2):
         for y in range(-HALF_Y, HALF_Y):
-            for z in range(-HALF_Z, HALF_Z-4):
+            for z in range(-1, 0):
                 v = Voxel(
                     x=float(x) * size,
                     y=float(y) * size,
                     z=float(z) * size,
                     size=size,
-                    color=mat.color,
+                    color=GOLD.color,
                 )
-                v.material = mat
+                v.material = GOLD
                 v.temperature = 300.0
-                # H⁺ ions start in the electrolyte
-                if mat is H2SO4_ELECTROLYTE:
-                    v.ion_concentration = 300.0  # 1M
-                if mat is TI3C2_MXENE:
-                    v.ion_concentration = 0.0  # start empty
                 vs.add_voxel(v)
 
-# Add gold electrodes on the bottom of the stack under mxene and graphene
-for x in range(-5, 1):
-    for y in range(-HALF_Y, HALF_Y):
-        for z in range(-HALF_Z, -HALF_Z+1):
-            v = Voxel(
-                x=float(x) * size,
-                y=float(y) * size,
-                z=float(z) * size - size,  # below the stack
-                size=size,
-                color=GOLD.color,
-            )
-            v.material = GOLD
-            v.temperature = 300.0
-            vs.add_voxel(v)
-for x in range(8, 12+5):
-    for y in range(-HALF_Y, HALF_Y):
-        for z in range(-HALF_Z, -HALF_Z+1):
-            v = Voxel(
-                x=float(x) * size,
-                y=float(y) * size,
-                z=float(z) * size - size,  # below the stack
-                size=size,
-                color=GOLD.color,
-            )
-            v.material = GOLD
-            v.temperature = 300.0
-            vs.add_voxel(v)
-#add electrolyte in the middle of the gold
-for x in range(1, 8):
-    for y in range(-HALF_Y, HALF_Y):
-        for z in range(-HALF_Z, -HALF_Z+1):
-            v = Voxel(
-                x=float(x) * size,
-                y=float(y) * size,
-                z=float(z) * size - size,  # below the stack
-                size=size,
-                color=H2SO4_ELECTROLYTE.color,
-            )
-            v.material = H2SO4_ELECTROLYTE
-            v.temperature = 300.0
-            v.ion_concentration = 300.0  # 1M
-            vs.add_voxel(v)
-# ---------------------------------------------------------------------------
-# Oscillating E-field along X drives ions between H₂SO₄ ↔ MXene
-# Period (200 µs) is twice the rendered frame duration (100 µs) so the
-# field/current arrows visibly flip direction between frames.
-# ---------------------------------------------------------------------------
-vs.add_oscillating_electric(1e5, 0.0, 0.0, frequency=1, phase=0.0)
+    for x in range(GRID_X, GRID_X + 4):
+        for y in range(-HALF_Y, HALF_Y):
+            for z in range(-1, 0):
+                v = Voxel(
+                    x=float(x) * size,
+                    y=float(y) * size,
+                    z=float(z) * size,
+                    size=size,
+                    color=GOLD.color,
+                )
+                v.material = GOLD
+                v.temperature = 300.0
+                vs.add_voxel(v)
+
+    # Electrolyte bridge under the gap so the device sits on a continuous base
+    for x in range(2, GRID_X):
+        for y in range(-HALF_Y, HALF_Y):
+            for z in range(-1, 0):
+                v = Voxel(
+                    x=float(x) * size,
+                    y=float(y) * size,
+                    z=float(z) * size,
+                    size=size,
+                    color=H2SO4_ELECTROLYTE.color,
+                )
+                v.material = H2SO4_ELECTROLYTE
+                v.temperature = 300.0
+                v.ion_concentration = 300.0  # 1M
+                vs.add_voxel(v)
+
+    return vs
+
 
 # ---------------------------------------------------------------------------
-# Simulation parameters
+# Main demo
 # ---------------------------------------------------------------------------
-vs.set_time_step(1e-6)        # 1 µs per sub-step
-vs.set_steps_per_frame(100)   # 100 sub-steps per rendered frame
+if __name__ == "__main__":
+    vs = build_memristor()
 
-# ---------------------------------------------------------------------------
-# GUI
-# ---------------------------------------------------------------------------
-sim_time_gui = vs.server.gui.add_markdown("Simulation time: **0.000 s**")
-conc_stats_gui = vs.server.gui.add_markdown("Ion conc: **---**")
+    # Static electric field along X (visible arrows) plus a small AC ripple.
+    vs.add_uniform_electric(1e5, 0.0, 0.0)
+    vs.add_oscillating_electric(2e4, 0.0, 0.0, frequency=1, phase=0.0)
+    # Uniform magnetic field into the page so B-field overlay has arrows too.
+    vs.add_uniform_magnetic(0.0, 0.0, 0.05)
 
-vs.setup_gui()
-vs.set_layer(VoxSym.LAYER_ION_CONCENTRATION, True)
-vs.set_layer(VoxSym.LAYER_CURRENT, True)
-vs.auto_camera()
-vs.opacity = 0.4
+    vs.set_time_step(1e-6)        # 1 µs per sub-step
+    vs.set_steps_per_frame(100)   # 100 sub-steps per rendered frame
 
-print("MXene Memristor demo.  Open http://localhost:8080")
-print("Graphene (dark) | H₂SO₄ (green) | Ti₃C₂ MXene (teal)")
-print("H⁺ ions oscillate between electrolyte and MXene under AC field.")
+    vs.setup_gui()
+    vs.set_layer(VoxSym.LAYER_ELECTRIC_FIELD, True)
+    vs.set_layer(VoxSym.LAYER_CURRENT, True)
+    vs.auto_camera()
+    vs.opacity = 0.4
 
+    print(f"MXene Memristor demo.  Open http://{vs.server.host}:{vs.server.port}")
+    print("Graphene (dark) | H₂SO₄ (green) | Ti₃C₂ MXene (teal) | Gold (yellow)")
+    print("H⁺ ions oscillate across the flat stack under AC field.")
 
-@vs.on_gui_update
-def _update_display():
-    sim_time_gui.content = f"Simulation time: **{_fmt_time(vs.elapsed_time)}**"
-    c_min, c_max, c_mean = vs.concentration_stats()
-    conc_stats_gui.content = f"Ion conc: **{c_min:.0f} → {c_max:.0f}** mol/m³"
-    
+    @vs.on_gui_update
+    def _update_display():
+        stats = vs.concentration_stats()
+        print(f"Simulation time: {_fmt_time(vs.elapsed_time)}  |  Ion conc: {stats[0]:.0f} → {stats[1]:.0f} mol/m³")
 
-vs.run_simulation()
+    vs.run_simulation()

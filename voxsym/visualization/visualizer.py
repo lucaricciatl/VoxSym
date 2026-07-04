@@ -1,6 +1,8 @@
+"""Connects to Renderer and adds optional overlay layers (fields, temperature, etc.)."""
+
 import numpy as np
-import viser
 from typing import Dict, List, Set, Callable, Optional
+
 from voxsym.voxel import Voxel
 from voxsym.voxsym import VoxSym
 from voxsym.visualization.renderer import Renderer
@@ -30,7 +32,7 @@ class Visualizer:
 
     def __init__(
         self,
-        server: viser.ViserServer,
+        server,
         voxsym: VoxSym,
         renderer: Renderer,
     ):
@@ -38,7 +40,7 @@ class Visualizer:
         self.voxsym = voxsym
         self.renderer = renderer
         self._active: Set[str] = {Layer.VOXEL_COLOR}
-        self._handles: Dict[str, Optional[viser.SceneNodeHandle]] = {}
+        self._handles: Dict[str, Optional[object]] = {}
 
         self._callbacks: Dict[str, Callable] = {
             Layer.VOXEL_COLOR: self._noop,
@@ -95,12 +97,12 @@ class Visualizer:
         diag = np.sqrt(dx * dx + dy * dy + dz * dz)
         dist = max(diag * distance_factor, 1e-6)
 
-        self.server.initial_camera.position = (
-            cx + dist * 0.6,
-            cy + dist * 0.4,
-            cz + dist * 0.6,
-        )
-        self.server.initial_camera.look_at = (cx, cy, cz)
+        # The WebGL server exposes an initial camera helper.
+        if hasattr(self.server, "set_initial_camera"):
+            self.server.set_initial_camera(
+                position=(cx + dist * 0.6, cy + dist * 0.4, cz + dist * 0.6),
+                look_at=(cx, cy, cz),
+            )
 
     def set_layer(self, name: str, active: bool = True):
         """Toggle a visualization layer on/off.
@@ -148,6 +150,17 @@ class Visualizer:
 
     def render(self):
         """Render base voxels + all active overlay layers."""
+        # Compute vector overlays first so their arrow data is available to
+        # the backend when we serialize the frame below.
+        for name in self._active:
+            if name in self._callbacks:
+                self._callbacks[name]()
+
+        # If no vector layer is active, hide the arrow mesh handles entirely.
+        for layer_name in (Layer.ELECTRIC_FIELD, Layer.MAGNETIC_FIELD, Layer.CURRENT):
+            if layer_name not in self._active:
+                self._hide_handle(layer_name)
+
         # ---- Cross-section: move hidden voxels far away so they don't occlude ----
         saved_positions = None
         if self.cross_section_axis is not None:
@@ -163,7 +176,7 @@ class Visualizer:
 
         # Determine voxel colors based on active scalar layer
         self._apply_scalar_colors()
-        self.renderer.render(self.server)
+        self.renderer.render()
 
         # Restore original positions
         if saved_positions is not None:
@@ -171,21 +184,6 @@ class Visualizer:
                 v.x = x
                 v.y = y
                 v.z = z
-
-        # Render vector overlays
-        any_vector_active = False
-        for name in self._active:
-            if name in self._callbacks:
-                self._callbacks[name]()
-                if name in (Layer.ELECTRIC_FIELD, Layer.MAGNETIC_FIELD, Layer.CURRENT):
-                    any_vector_active = True
-            else:
-                self._noop()
-
-        # If no vector layer is active, hide the arrow mesh handles entirely.
-        for layer_name in (Layer.ELECTRIC_FIELD, Layer.MAGNETIC_FIELD, Layer.CURRENT):
-            if layer_name not in self._active:
-                self._hide_handle(layer_name)
 
         # Hide handles for inactive layers
         for name, handle in list(self._handles.items()):
@@ -282,7 +280,7 @@ class Visualizer:
             voxel.color = self._colormap_ion(norm)
 
     # ------------------------------------------------------------------
-    # Vector overlays – drawn as arrows via viser scene handles
+    # Vector overlays – drawn as arrows via the renderer backend
     # ------------------------------------------------------------------
 
     def _render_electric_field(self):
@@ -352,6 +350,7 @@ class Visualizer:
         n = len(selected)
         points = np.zeros((n, 2, 3), dtype=np.float32)
         colors = np.zeros((n, 3), dtype=np.uint8)
+        directions = np.zeros((n, 3), dtype=np.float32)
 
         # Geometry parameters in *rendered* units (after render_scale).
         base_size = float(selected[0].size) * scl
@@ -361,6 +360,7 @@ class Visualizer:
 
         for i, (voxel, vec, mag) in enumerate(vecs):
             direction = vec / mag if mag > 1e-12 else np.zeros(3)
+            directions[i] = direction.astype(np.float32)
             # Relative strength in [0, 1].
             strength = mag / max_mag
             # Arrow length in rendered units: at least a fraction of the voxel
@@ -387,28 +387,13 @@ class Visualizer:
                 mix = 0.5 + 0.5 * strength
                 colors[i] = tuple(min(255, int(c * mix)) for c in base_color)
 
-        handle = self._handles.get(layer_name)
-        if handle is not None:
-            handle.visible = True
-            handle.points = points
-            handle.colors = colors
-            # Sync arrow geometry to the rendered voxel size.  Note: reading
-            # these handle properties back may show viser defaults due to a
-            # class-attribute shadow in the handle repr, but the values are
-            # correctly queued and applied on the client.
-            handle.shaft_radius = shaft_radius
-            handle.head_radius = head_radius
-            handle.head_length = head_length
-        else:
-            handle = self.server.scene.add_arrows(
-                name=name,
-                points=points,
-                colors=colors,
-                shaft_radius=shaft_radius,
-                head_radius=head_radius,
-                head_length=head_length,
+        backend = self.renderer.backend
+        if backend is not None:
+            backend.add_arrows(
+                points, colors, shaft_radius, head_radius, head_length,
+                direction=directions,
             )
-            self._handles[layer_name] = handle
+            self._handles[layer_name] = backend.handle
 
     # ------------------------------------------------------------------
     # Helpers

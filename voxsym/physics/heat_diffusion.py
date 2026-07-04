@@ -8,6 +8,7 @@ import numpy as np
 from typing import Tuple, Optional
 from voxsym.voxel import Voxel
 from voxsym.voxsym import VoxSym
+from voxsym.physics.topology import GridTopology
 
 
 class HeatDiffusion:
@@ -22,6 +23,10 @@ class HeatDiffusion:
 
     def __init__(self, voxsym: VoxSym):
         self.voxsym = voxsym
+
+        # Shared topology cache; rebuilt when the voxel grid changes.
+        self._topology: Optional[GridTopology] = None
+        self._topology_voxel_count = -1
 
         # Edge-list format for the neighbor graph
         self._edge_src = None   # (E,) int32
@@ -43,42 +48,27 @@ class HeatDiffusion:
     # ------------------------------------------------------------------
 
     def _build_arrays(self):
-        if self._built:
+        if self._built and self._topology_voxel_count == len(self.voxsym.get_voxels()):
             return
+
         voxels = self.voxsym.get_voxels()
         n = len(voxels)
         if n == 0:
+            self._topology = GridTopology([])
+            self._topology_voxel_count = 0
+            self._edge_src = self._topology.edges_src
+            self._edge_dst = self._topology.edges_dst
+            self._k = np.array([], dtype=np.float64)
+            self._rho_cp = np.array([], dtype=np.float64)
+            self._dx = np.array([], dtype=np.float64)
             self._built = True
             return
 
-        # --- coordinate map ---
-        coord_to_idx = {}
-        for idx, v in enumerate(voxels):
-            key = (
-                int(round(v.x / v.size)),
-                int(round(v.y / v.size)),
-                int(round(v.z / v.size)),
-            )
-            coord_to_idx[key] = idx
-
-        # --- edge list (face-connected neighbours) ---
-        dirs = [(1, 0, 0), (-1, 0, 0), (0, 1, 0), (0, -1, 0), (0, 0, 1), (0, 0, -1)]
-        src_list = []
-        dst_list = []
-        for idx, v in enumerate(voxels):
-            base = (
-                int(round(v.x / v.size)),
-                int(round(v.y / v.size)),
-                int(round(v.z / v.size)),
-            )
-            for dx_, dy_, dz_ in dirs:
-                nkey = (base[0] + dx_, base[1] + dy_, base[2] + dz_)
-                if nkey in coord_to_idx:
-                    src_list.append(idx)
-                    dst_list.append(coord_to_idx[nkey])
-
-        self._edge_src = np.array(src_list, dtype=np.int32)
-        self._edge_dst = np.array(dst_list, dtype=np.int32)
+        # --- shared topology ---
+        self._topology = GridTopology(voxels, connectivity=6)
+        self._topology_voxel_count = n
+        self._edge_src = self._topology.edges_src
+        self._edge_dst = self._topology.edges_dst
 
         # --- material arrays ---
         self._k = np.zeros(n, dtype=np.float64)

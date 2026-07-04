@@ -3,10 +3,22 @@ Electric & magnetic field solvers (vectorized).
 
 Field evaluation is batched: all voxel positions are processed at once
 with numpy array operations instead of per-voxel Python loops.
+
+The module also exposes ``build_field_topology`` so that VoxSym can
+share a single ``GridTopology`` cache with the diffusion solvers.
 """
 
 import numpy as np
-from typing import List, Tuple
+from typing import List, Tuple, Optional
+
+from voxsym.physics.topology import GridTopology
+
+
+def build_field_topology(voxels) -> Optional[GridTopology]:
+    """Build a 6-connectivity topology for the given voxels, if any."""
+    if not voxels:
+        return None
+    return GridTopology(voxels, connectivity=6)
 
 
 class Field:

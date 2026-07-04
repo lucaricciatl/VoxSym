@@ -1,8 +1,8 @@
 """
 01 — Basic voxel grid
 =====================
-Creates a 10×10×10 copper cube and renders it with Viser.
-Standard GUI: layer toggles, cross-section, opacity.
+Creates a 10×10×10 copper cube and renders it with the WebGL viewer.
+Standard browser GUI: layer toggles, cross-section, opacity.
 """
 
 import sys
@@ -27,12 +27,7 @@ for x in range(-HALF, HALF):
 
 vs.setup_gui()
 
-print(f"Rendered {len(vs.get_voxels())} copper voxels.  Open http://localhost:8080")
-print("Use Cross Section dropdown + slider to slice through the cube.")
-
-
-@vs.on_update
-def _voxsym_step():
-    pass
+print(f"Rendered {len(vs.get_voxels())} copper voxels.  Open http://{vs.server.host}:{vs.server.port}")
+print("Use the browser sidebar to slice, change layers and control playback.")
 
 vs.run_simulation()

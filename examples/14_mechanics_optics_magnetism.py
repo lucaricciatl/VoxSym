@@ -70,21 +70,19 @@ vs.set_external_magnetic_field((0.5, 0.0, 0.0))
 vs.setup_gui()
 vs.set_layer(VoxSym.LAYER_MATERIAL, True)
 
-print("Coupled mechanics / optics / magnetism demo.")
-print("Open http://localhost:8080")
+print(f"Coupled mechanics / optics / magnetism demo.")
+print(f"Open http://{vs.server.host}:{vs.server.port}")
 print("Heated top, laser from −z, B-field along +x.")
-
-stress_gui = vs.server.gui.add_markdown("Max stress: **---**")
-absorb_gui = vs.server.gui.add_markdown("Absorbed power: **---**")
-mag_gui = vs.server.gui.add_markdown("|M|: **---**")
 
 
 @vs.on_gui_update
 def _update_display():
-    stress_gui.content = f"Max stress: **{vs.max_stress():.2e} Pa**"
-    absorb_gui.content = f"Absorbed power: **{vs.total_absorbed_optical_power():.3f} a.u.**"
     m_min, m_max, m_mean = vs.magnetization_stats()
-    mag_gui.content = f"|M|: **{m_min:.2e} → {m_max:.2e} A/m**"
+    print(
+        f"Max stress: {vs.max_stress():.2e} Pa  |  "
+        f"Absorbed power: {vs.total_absorbed_optical_power():.3f} a.u.  |  "
+        f"|M|: {m_min:.2e} → {m_max:.2e} A/m"
+    )
 
 
 @vs.on_update
