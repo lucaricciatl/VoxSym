@@ -34,6 +34,11 @@ export function updateVoxels(scene, payload) {
   mesh.visible = true;
   mesh.count = count;
 
+  // Order: render arrows last so they sit on top of transparent voxels.
+  if (scene.arrowRoot) {
+    scene.scene.add(scene.arrowRoot);
+  }
+
   const positions = voxels.positions || [];
   const sizes = voxels.sizes || [];
   const colors = voxels.colors || [];

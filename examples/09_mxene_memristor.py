@@ -181,8 +181,8 @@ if __name__ == "__main__":
     # Uniform magnetic field into the page so B-field overlay has arrows too.
     vs.add_uniform_magnetic(0.0, 0.0, 0.05)
 
-    vs.set_time_step(1e-6)        # 1 µs per sub-step
-    vs.set_steps_per_frame(100)   # 100 sub-steps per rendered frame
+    vs.set_time_step(1e-5)        # 10 µs per sub-step
+    vs.set_steps_per_frame(5)     # 5 sub-steps per rendered frame
 
     vs.setup_gui()
     vs.set_layer(VoxSym.LAYER_ELECTRIC_FIELD, True)

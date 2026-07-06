@@ -7,6 +7,20 @@ import { LayersPanel } from './LayersPanel.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import './App.css';
 
+function formatTime(seconds) {
+  const t = Math.abs(seconds);
+  if (t === 0) return 't = 0 s';
+  if (t < 1e-3) {
+    const us = Math.round(t * 1e6);
+    return `t = ${us} µs`;
+  }
+  if (t < 1.0) {
+    const ms = t * 1e3;
+    return `t = ${ms.toFixed(3).replace(/\.?0+$/, '')} ms`.replace(/\.$/, '');
+  }
+  return `t = ${t.toFixed(3).replace(/\.?0+$/, '')} s`.replace(/\.$/, '');
+}
+
 export class App {
   constructor(root) {
     this.root = root;
@@ -31,7 +45,10 @@ export class App {
         <div id="panel-content"></div>
       </aside>
       <div id="viewport"></div>
-      <div id="status">disconnected</div>
+      <div id="bottom-bar">
+        <span id="sim-time">t = 0 s</span>
+        <span id="status">disconnected</span>
+      </div>
       <div id="viewport-controls">
         <button class="toggle ${this.store.state.showGrid ? 'active' : ''}" id="toggle-grid" title="Base grid">
           <span class="icon">#</span> Grid
@@ -62,6 +79,10 @@ export class App {
         const el = this.root.querySelector('#status');
         if (el) el.textContent = state.connected ? 'connected' : 'disconnected';
       }
+      if (patch.time !== undefined || patch.frame !== undefined) {
+        const timeEl = this.root.querySelector('#sim-time');
+        if (timeEl) timeEl.textContent = formatTime(state.time);
+      }
       if (patch.showGrid !== undefined || patch.showAxes !== undefined) {
         this._updateSceneHelpers(state.showGrid, state.showAxes);
         const gridBtn = this.root.querySelector('#toggle-grid');
@@ -79,6 +100,7 @@ export class App {
 
   onFrame(payload) {
     if (!payload || payload.type !== 'frame') return;
+    window.lastFrame = payload;
     updateVoxels(this.scene, payload);
     const arrowCount = updateArrows(this.scene, payload.arrows);
     this.store.setFrameMeta({
@@ -160,19 +182,19 @@ export class App {
   }
 
   _renderSimulationPanel() {
+    const isPlaying = this.store.state.playing;
     this.panelContent.innerHTML = `
       <section id="simulation-panel">
         <h3>Simulation</h3>
         <div class="btn-stack">
-          <button class="btn primary" id="sim-play">Play</button>
-          <button class="btn" id="sim-stop">Stop</button>
+          <button class="btn primary" id="sim-play-pause">${isPlaying ? 'Pause' : 'Play'}</button>
           <button class="btn" id="sim-record">${this.store.state.recording ? 'Stop recording' : 'Record'}</button>
           <button class="btn" id="sim-restart">Restart</button>
         </div>
+        <p class="hint">Status: <span id="sim-status">${isPlaying ? 'running' : 'paused'}</span></p>
       </section>
     `;
-    this.panelContent.querySelector('#sim-play')?.addEventListener('click', () => this.store.setPlaying(true));
-    this.panelContent.querySelector('#sim-stop')?.addEventListener('click', () => this.store.setPlaying(false));
+    this.panelContent.querySelector('#sim-play-pause')?.addEventListener('click', () => this.store.setPlaying(!this.store.state.playing));
     this.panelContent.querySelector('#sim-record')?.addEventListener('click', () => this.store.setRecording(!this.store.state.recording));
     this.panelContent.querySelector('#sim-restart')?.addEventListener('click', () => this.ws.send({ cmd: 'restart' }));
   }

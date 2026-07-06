@@ -1,10 +1,9 @@
 export const LAYERS = {
-  SCALAR: ['voxel_color', 'temperature', 'ion_concentration', 'material'],
+  SCALAR: ['temperature', 'ion_concentration', 'material'],
   VECTOR: ['electric_field', 'magnetic_field', 'current'],
 };
 
 const SCALAR_LABELS = {
-  voxel_color: 'Base color',
   temperature: 'Temperature',
   ion_concentration: 'Ion concentration',
   material: 'Material',
@@ -21,7 +20,7 @@ export { SCALAR_LABELS, VECTOR_LABELS };
 export class Store {
   constructor() {
     this.state = {
-      activeScalar: 'voxel_color',
+      activeScalar: 'material',
       activeVectors: new Set(),
       opacity: 1.0,
       arrowScale: 0.8,

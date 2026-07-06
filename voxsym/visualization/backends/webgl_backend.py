@@ -173,7 +173,7 @@ class WebGLBackend(RenderBackend):
         base_size = 1.0
         if self.voxsym.voxels:
             try:
-                base_size = float(self.voxsym.voxels[0].size * self.render_scale)
+                base_size = float(self.voxsym.voxels[0].size * self.voxsym.render_scale)
             except Exception:
                 base_size = 1.0
         directions = getattr(self, "_arrow_directions", None)

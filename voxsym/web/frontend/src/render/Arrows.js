@@ -15,16 +15,17 @@ export function updateArrows(scene, arrows) {
   }
 
   const count = arrows.count;
-  const points = arrows.points;
-  const colors = arrows.colors || [];
+  const points = arrows.points.flat ? arrows.points.flat() : arrows.points;
+  const colors = (arrows.colors || []).flat ? (arrows.colors || []).flat() : (arrows.colors || []);
   const baseSize = Number(arrows.base_size ?? 1.0);
 
   const root = new THREE.Group();
   const material = new THREE.MeshBasicMaterial({
     color: 0xffffff,
     transparent: true,
-    opacity: 0.9,
-    depthTest: true,
+    opacity: 0.95,
+    depthTest: false,
+    depthWrite: false,
   });
 
   const shaftGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.75, 12, 1);
@@ -38,12 +39,14 @@ export function updateArrows(scene, arrows) {
   headMesh.count = count;
   shaftMesh.castShadow = false;
   headMesh.castShadow = false;
+  shaftMesh.frustumCulled = false;
+  headMesh.frustumCulled = false;
 
   const halfVoxel = 0.5 * baseSize;
-  const minLen = Math.max(0.2, 0.5 * baseSize);
-  const maxLen = Math.max(2.0, 3.0 * baseSize);
+  const minLen = Math.max(0.4, 0.6 * baseSize);
+  const maxLen = Math.max(2.0, 2.5 * baseSize);
   const geoHeight = 1.25;
-  const baseScale = Math.max(0.05, baseSize * 0.12);
+  const baseScale = Math.max(0.08, baseSize * 0.15);
 
   for (let i = 0; i < count; i++) {
     const i6 = i * 6;
@@ -95,9 +98,16 @@ export function updateArrows(scene, arrows) {
   if (shaftMesh.instanceColor) shaftMesh.instanceColor.needsUpdate = true;
   if (headMesh.instanceColor) headMesh.instanceColor.needsUpdate = true;
 
+  shaftMesh.renderOrder = 999;
+  headMesh.renderOrder = 999;
+
   root.add(shaftMesh);
   root.add(headMesh);
   scene.setArrowRoot(root);
+
+  // Ensure arrows are rendered after voxels so they draw on top.
+  scene.scene.remove(scene.arrowRoot);
+  scene.scene.add(scene.arrowRoot);
 
   return count;
 }

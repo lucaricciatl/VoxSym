@@ -38,21 +38,20 @@ class Visualizer:
         self.server = server
         self.voxsym = voxsym
         self.renderer = renderer
-        self._active: Set[str] = {Layer.VOXEL_COLOR}
+        self._active: Set[str] = {Layer.MATERIAL}
         self._handles: Dict[str, Optional[object]] = {}
 
         self._callbacks: Dict[str, Callable] = {
-            Layer.VOXEL_COLOR: self._noop,
             Layer.ELECTRIC_FIELD: self._render_electric_field,
             Layer.MAGNETIC_FIELD: self._render_magnetic_field,
             Layer.CURRENT: self._render_current,
         }
-        # Snapshot of original voxel colors so "Base colours" can restore them
-        # after a scalar layer (temperature, material, ion conc) has changed them.
+        # Snapshot of original voxel colors so we can restore them when a
+        # scalar overlay layer is switched off.
         self._base_colors: Dict[int, tuple] = {}
         # Layer parameters
-        self.field_arrow_scale = 0.8      # length scale for arrow display
-        self.field_subsample = 2            # show every 2nd arrow per axis
+        self.field_arrow_scale = 1.2      # length scale for arrow display
+        self.field_subsample = 4            # show every 4th arrow per axis
         self.field_color_mode = "direction"  # "direction" | "magnitude"
 
         # Cross-section (mobile slicing plane)
@@ -109,7 +108,6 @@ class Visualizer:
         others.  Vector overlay layers (E/B-field, current) can coexist.
         """
         scalar_layers = {
-            Layer.VOXEL_COLOR,
             Layer.TEMPERATURE,
             Layer.MATERIAL,
             Layer.ION_CONCENTRATION,
@@ -121,25 +119,24 @@ class Visualizer:
                 for other in scalar_layers:
                     if other != name:
                         self._active.discard(other)
-                if name == Layer.VOXEL_COLOR:
-                    self._restore_base_colors()
+            if name == Layer.VOXEL_COLOR:
+                self._restore_base_colors()
             # Vector overlays are drawn by the renderer; do not mutate
             # scalar colors or EM state here.
         else:
             self._active.discard(name)
             if name in self._handles and self._handles[name] is not None:
                 self._handles[name].visible = False
-        # Ensure at least one base layer is active
-        if not self._active:
-            self._active.add(Layer.VOXEL_COLOR)
-            self._restore_base_colors()
+        # Ensure the material layer is active by default
+        if not self._active.intersection(scalar_layers):
+            self._active.add(Layer.MATERIAL)
+            self._base_colors_restored = False
 
     def set_layers_from_message(self, active: List[str]):
         """Bulk-update active layers from a client message and re-render."""
         self._active = set(active)
         if not self._active:
-            self._active.add(Layer.VOXEL_COLOR)
-            self._restore_base_colors()
+            self._active.add(Layer.MATERIAL)
 
     def toggle_layer(self, name: str) -> bool:
         """Flip layer state. Returns new state."""
@@ -169,29 +166,23 @@ class Visualizer:
             if layer_name not in self._active:
                 self._hide_handle(layer_name)
 
-        # ---- Cross-section: move hidden voxels far away so they don't occlude ----
-        saved_positions = None
-        if self.cross_section_axis is not None:
-            voxels = self.voxsym.get_voxels()
-            saved_positions = [(v.x, v.y, v.z) for v in voxels]
-            axis = self.cross_section_axis
-            pos = self.cross_section_pos
-            for v in voxels:
-                if getattr(v, axis) > pos:
-                    v.x = 1e6
-                    v.y = 1e6
-                    v.z = 1e6
+        # Serialize the merged frame through the renderer backend.
+        self._encode_latest_frame()
 
-        # Determine voxel colors based on active scalar layer
+    def reset_layers(self):
+        """Return to default material visualization."""
+        self._active = {Layer.MATERIAL}
+        self._restore_base_colors()
+        for name in (Layer.ELECTRIC_FIELD, Layer.MAGNETIC_FIELD, Layer.CURRENT):
+            self._hide_handle(name)
+
+    # ------------------------------------------------------------------
+    # Frame encoding
+    # ------------------------------------------------------------------
+
+    def _encode_latest_frame(self):
         self._apply_scalar_colors()
         self.renderer.render()
-
-        # Restore original positions
-        if saved_positions is not None:
-            for v, (x, y, z) in zip(self.voxsym.get_voxels(), saved_positions):
-                v.x = x
-                v.y = y
-                v.z = z
 
         # Hide handles for inactive layers
         for name, handle in list(self._handles.items()):
@@ -207,8 +198,8 @@ class Visualizer:
                 except Exception:
                     pass
             self._handles[name] = None
-        self._active = {Layer.VOXEL_COLOR}
-        self._restore_base_colors()
+        self._active = {Layer.MATERIAL}
+        self._base_colors_restored = False
 
     # ------------------------------------------------------------------
     # Scalar layers – applied by mutating voxel.color before render()

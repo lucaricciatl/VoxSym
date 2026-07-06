@@ -35,13 +35,13 @@ def test_frame_payload_with_voxels():
             "opacities": [1.0, 0.5],
         },
         arrows={"count": 0, "points": [], "colors": []},
-        active_layers=["voxel_color"],
+        active_layers=["material"],
     )
     encoded = payload.encode()
     obj = json.loads(encoded)
     assert obj["voxels"]["count"] == 2
     assert obj["voxels"]["colors"] == [255, 0, 0, 0, 255, 0]
-    assert obj["active_layers"] == ["voxel_color"]
+    assert obj["active_layers"] == ["material"]
 
 
 def test_command_payload_decode():

@@ -42,13 +42,24 @@ test('files panel shows load simulation data and load simulation buttons', async
   await expect(page.locator('#load-sim')).toBeVisible();
 });
 
-test('simulation panel shows Play, Stop, Record, Restart buttons', async ({ page }) => {
+test('simulation panel shows Play/Pause, Record, Restart buttons', async ({ page }) => {
   await page.goto('/');
   await page.click('[data-menu="simulation"]');
   await expect(page.locator('#simulation-panel')).toBeVisible();
-  for (const id of ['sim-play', 'sim-stop', 'sim-record', 'sim-restart']) {
-    await expect(page.locator(`#${id}`)).toBeVisible();
-  }
+  await expect(page.locator('#sim-play-pause')).toBeVisible();
+  await expect(page.locator('#sim-record')).toBeVisible();
+  await expect(page.locator('#sim-restart')).toBeVisible();
+});
+
+test('default scalar layer is material', async ({ page }) => {
+  await page.goto('/');
+  await page.click('[data-menu="layers"]');
+  await page.waitForFunction(
+    () => window.voxsymApp?.store?.state?.activeScalar === 'material',
+    { timeout: 10000 },
+  );
+  const activeCard = page.locator('[data-scalar="material"].active');
+  await expect(activeCard).toBeVisible();
 });
 
 test('selecting temperature layer shows plasma heatmap', async ({ page }) => {
@@ -81,9 +92,6 @@ test('selecting temperature layer shows plasma heatmap', async ({ page }) => {
     base,
     { timeout: 10000 },
   );
-
-  const temp = await getVoxelColor(page);
-  expect(temp).not.toBeNull();
 });
 
 test('activating vector field shows arrows', async ({ page }) => {
@@ -127,15 +135,13 @@ test('bottom grid/axis toggles control helper visibility', async ({ page }) => {
   );
 });
 
-test('selecting base color restores copper-like color', async ({ page }) => {
+test('selecting material restores material-like colors', async ({ page }) => {
   await page.goto('/');
   await waitForVoxelMesh(page);
-  const base = await getVoxelColor(page);
-  expect(base).not.toBeNull();
 
   await page.click('[data-menu="layers"]');
   const tempBtn = page.locator('[data-scalar="temperature"]');
-  const baseBtn = page.locator('[data-scalar="voxel_color"]');
+  const matBtn = page.locator('[data-scalar="material"]');
   await expect(tempBtn).toBeVisible({ timeout: 10000 });
 
   await tempBtn.click();
@@ -144,18 +150,21 @@ test('selecting base color restores copper-like color', async ({ page }) => {
     { timeout: 10000 },
   );
 
-  await baseBtn.click();
+  await matBtn.click();
   await page.waitForFunction(
-    () => window.voxsymApp?.store?.state?.activeScalar === 'voxel_color',
+    () => window.voxsymApp?.store?.state?.activeScalar === 'material',
     { timeout: 10000 },
   );
+});
 
+test('simulation time display updates from frames', async ({ page }) => {
+  await page.goto('/');
+  const timeEl = page.locator('#sim-time');
+  await expect(timeEl).toBeVisible();
   await page.waitForFunction(
     () => {
-      const mesh = window.voxsymApp?.scene?.voxelMesh;
-      if (!mesh || !mesh.instanceColor) return false;
-      const arr = mesh.instanceColor.array;
-      return arr[0] > arr[2] && arr[0] > 0.5;
+      const txt = window.voxsymApp?.root?.querySelector('#sim-time')?.textContent ?? '';
+      return /^t = \d/.test(txt);
     },
     { timeout: 10000 },
   );

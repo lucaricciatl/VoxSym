@@ -30,7 +30,7 @@ def test_api_set_layer_changes_active_layers():
         assert client.wait_for_server()
         client.connect()
         frame = client.receive_frame()
-        assert frame["active_layers"] == ["voxel_color"]
+        assert frame["active_layers"] == ["material"]
 
         vs.set_layer("temperature", True)
         vs.render()

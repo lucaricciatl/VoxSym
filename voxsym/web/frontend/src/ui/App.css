@@ -72,14 +72,22 @@ html, body, #app {
 
 #viewport canvas { display: block; width: 100%; height: 100%; }
 
-#status {
+#bottom-bar {
   position: fixed;
   bottom: 6px;
   right: 8px;
+  display: flex;
+  gap: 16px;
   font-size: 12px;
-  color: #777;
+  color: #555;
   z-index: 21;
+  background: rgba(255,255,255,0.85);
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  padding: 4px 12px;
 }
+#bottom-bar #sim-time { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; }
+#bottom-bar #status { color: #777; }
 
 section { margin-bottom: 18px; }
 section:last-child { margin-bottom: 0; }
@@ -142,7 +150,6 @@ section h3 {
   background: #888;
   flex-shrink: 0;
 }
-.layer-color.voxel_color { background: #b87333; }
 .layer-color.temperature { background: linear-gradient(90deg, #0c0741, #f0f921); }
 .layer-color.ion_concentration { background: linear-gradient(90deg, #0a1464, #00c8ff, #fff032); }
 .layer-color.material { background: linear-gradient(90deg, #b87333, #808080, #e0e0e0); }
