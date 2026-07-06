@@ -181,8 +181,9 @@ if __name__ == "__main__":
     # Uniform magnetic field into the page so B-field overlay has arrows too.
     vs.add_uniform_magnetic(0.0, 0.0, 0.05)
 
-    vs.set_time_step(5e-5)        # 50 µs per sub-step (stable cap ~1.6e-4 s)
-    vs.set_steps_per_frame(1)     # one sub-step per rendered frame
+    vs.disable_heat()             # isothermal memristor: avoid heat CFL bottleneck
+    vs.set_time_step(1e-3)        # 1 ms per rendered frame; internally sub-stepped to ion CFL cap
+    vs.set_steps_per_frame(1)     # one step_and_update() call per rendered frame
 
     vs.setup_gui()
     vs.set_layer(VoxSym.LAYER_ELECTRIC_FIELD, True)

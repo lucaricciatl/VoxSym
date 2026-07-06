@@ -100,6 +100,7 @@ class VoxSym:
 
         # Internal components (lazy initialization)
         self._heat_solver = None
+        self._heat_solver_enabled = True
         self._ion_solver = None
         self._em_solver = None
         self._poisson_solver = None
@@ -433,10 +434,16 @@ class VoxSym:
     # ==================================================================
 
     def _ensure_heat_solver(self):
+        if not self._heat_solver_enabled:
+            raise RuntimeError("Heat solver is disabled; call enable_heat() first.")
         if self._heat_solver is None:
             from voxsym.physics.heat_diffusion import HeatDiffusion
             self._heat_solver = HeatDiffusion(self)
         return self._heat_solver
+
+    def enable_heat(self):
+        """Re-enable the thermal solver after it has been disabled."""
+        self._heat_solver_enabled = True
 
     def _ensure_ion_solver(self):
         if self._ion_solver is None:
@@ -525,10 +532,14 @@ class VoxSym:
         if self._enable_poisson:
             self.solve_poisson()
 
-        self._ensure_heat_solver()
         self._ensure_ion_solver()
-        self._pending_temps = self._heat_solver.compute_step(dt)
         self._pending_conc = self._ion_solver.compute_step(dt)
+
+        if self._heat_solver is not None:
+            self._ensure_heat_solver()
+            self._pending_temps = self._heat_solver.compute_step(dt)
+        else:
+            self._pending_temps = None
 
         # Optional charge conservation update from ionic flux.
         if self._ion_solver.conserve_charge:
@@ -576,30 +587,27 @@ class VoxSym:
         """
         if dt is None:
             dt = self.time_step
-        # Skip the slow solvers when dt is huge relative to the WebGL view's
-        # needs.  For sub-microsecond steps we still run everything; for
-        # larger steps we only advance the clock and EM fields, which is the
-        # dominant cost the user actually sees.
-        if dt >= 1e-6:
-            self._elapsed_time += dt
-            self.update()
+        dt = float(dt)
+        if dt <= 0:
             return
 
-        dt = self._clamp_dt(dt)
-        self.step_simulation(dt)
-        self._elapsed_time += dt
-        self.update()
+        sub_dt = self._clamp_dt(dt)
+        n_steps = max(1, int(np.ceil(dt / sub_dt)))
+        sub_dt = dt / n_steps
+
+        for _ in range(n_steps):
+            self.step_simulation(sub_dt)
+            self._elapsed_time += sub_dt
+            self.update()
 
     def _clamp_dt(self, dt: float) -> float:
-        """Warn and clamp *dt* if it exceeds the safe limit."""
+        """Return the largest safe sub-step not exceeding the CFL cap."""
         dt = float(dt)
         if dt <= 0:
             return dt
         try:
             cap = self.max_stable_dt()
         except Exception:
-            # If solvers are not yet built or max_stable_dt fails for any
-            # reason, fall back to the user-provided value rather than crash.
             return dt
         if not np.isfinite(cap) or cap <= 0:
             return dt
@@ -627,18 +635,15 @@ class VoxSym:
             max_stable_dt_for_ion_solver,
         )
 
-        self._ensure_heat_solver()
         self._ensure_ion_solver()
-
-        # Make sure the solvers have built their internal material arrays from
-        # the current voxel grid before asking for a stability cap.
-        self._heat_solver._build_arrays()
         self._ion_solver._build_arrays()
+        caps = [max_stable_dt_for_ion_solver(self._ion_solver)]
 
-        heat_dt = max_stable_dt_for_heat_solver(self._heat_solver)
-        ion_dt = max_stable_dt_for_ion_solver(self._ion_solver)
+        if self._heat_solver_enabled:
+            self._ensure_heat_solver()
+            self._heat_solver._build_arrays()
+            caps.append(max_stable_dt_for_heat_solver(self._heat_solver))
 
-        caps = [heat_dt, ion_dt]
         finite_caps = [c for c in caps if np.isfinite(c) and c > 0]
         if not finite_caps:
             return float("inf")
@@ -659,6 +664,15 @@ class VoxSym:
     def clear_heat_sources(self):
         if self._heat_solver is not None:
             self._heat_solver.clear_sources()
+
+    def disable_heat(self):
+        """Disable the thermal solver for this simulation.
+
+        Useful when the problem is isothermal and the explicit heat
+        diffusion CFL would otherwise force tiny time steps.
+        """
+        self._heat_solver_enabled = False
+        self._heat_solver = None
 
     def set_region_temperature(self, center, radius, temperature):
         """Set an initial temperature region and pin it (Dirichlet)."""
