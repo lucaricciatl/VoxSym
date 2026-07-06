@@ -169,6 +169,26 @@ class Visualizer:
         # Serialize the merged frame through the renderer backend.
         self._encode_latest_frame()
 
+    def maybe_skip_frame(self) -> bool:
+        """Return True if we should skip this render to save bandwidth.
+
+        Uses a target frame interval so the WebSocket is not flooded when
+        the simulation loop runs faster than the browser can render.
+        """
+        import time
+        now = time.perf_counter()
+        target = getattr(self, "_target_frame_interval", 1.0 / 30.0)
+        last = getattr(self, "_last_render_time", 0.0)
+        if now - last < target:
+            return True
+        self._last_render_time = now
+        return False
+
+    def request_render(self):
+        """Schedule a frame render + broadcast, skipping only the throttle gate."""
+        if not self.maybe_skip_frame():
+            self.render()
+
     def reset_layers(self):
         """Return to default material visualization."""
         self._active = {Layer.MATERIAL}
@@ -346,8 +366,8 @@ class Visualizer:
         # Geometry parameters in *rendered* units (after render_scale).
         base_size = float(selected[0].size) * scl
         shaft_radius = 0.04 * base_size
-        head_radius = 0.08 * base_size
-        head_length = 0.12 * base_size * self.field_arrow_scale
+        head_radius = 0.06 * base_size
+        head_length = 0.10 * base_size * self.field_arrow_scale
 
         for i, (voxel, vec, mag) in enumerate(vecs):
             direction = vec / mag if mag > 1e-12 else np.zeros(3)
@@ -355,12 +375,11 @@ class Visualizer:
             # Relative strength in [0, 1].
             strength = mag / max_mag
             # Arrow length in rendered units: at least a fraction of the voxel
-            # size (so orientation is always readable) and up to ~1.5 voxel
-            # sizes for strong fields.
+            # size (so orientation is always readable) and up to ~1 voxel size.
             length = (
                 base_size
                 * self.field_arrow_scale
-                * (0.3 + 0.9 * strength)
+                * (0.25 + 0.55 * strength)
             )
 
             center = np.array(

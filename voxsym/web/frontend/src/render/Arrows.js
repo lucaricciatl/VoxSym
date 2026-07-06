@@ -30,8 +30,8 @@ export function updateArrows(scene, arrows) {
 
   const shaftGeo = new THREE.CylinderGeometry(0.12, 0.12, 0.75, 12, 1);
   shaftGeo.translate(0, 0.375, 0);
-  const headGeo = new THREE.ConeGeometry(0.36, 0.5, 16, 1);
-  headGeo.translate(0, 0.875, 0);
+  const headGeo = new THREE.ConeGeometry(0.18, 0.28, 16, 1);
+  headGeo.translate(0, 0.96, 0);
 
   const shaftMesh = new THREE.InstancedMesh(shaftGeo, material, count);
   const headMesh = new THREE.InstancedMesh(headGeo, material, count);

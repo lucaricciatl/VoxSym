@@ -181,8 +181,8 @@ if __name__ == "__main__":
     # Uniform magnetic field into the page so B-field overlay has arrows too.
     vs.add_uniform_magnetic(0.0, 0.0, 0.05)
 
-    vs.set_time_step(1e-5)        # 10 µs per sub-step
-    vs.set_steps_per_frame(5)     # 5 sub-steps per rendered frame
+    vs.set_time_step(5e-5)        # 50 µs per sub-step (stable cap ~1.6e-4 s)
+    vs.set_steps_per_frame(1)     # one sub-step per rendered frame
 
     vs.setup_gui()
     vs.set_layer(VoxSym.LAYER_ELECTRIC_FIELD, True)
@@ -199,4 +199,4 @@ if __name__ == "__main__":
         stats = vs.concentration_stats()
         print(f"Simulation time: {_fmt_time(vs.elapsed_time)}  |  Ion conc: {stats[0]:.0f} → {stats[1]:.0f} mol/m³")
 
-    vs.run_simulation()
+    vs.run_simulation(sleep=0.02)

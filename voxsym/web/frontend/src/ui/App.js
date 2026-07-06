@@ -96,6 +96,7 @@ export class App {
     });
 
     window.voxsymApp = this;
+    window.store = this.store;
   }
 
   onFrame(payload) {
@@ -164,8 +165,10 @@ export class App {
     });
     switch (menu) {
       case 'layers':
+        this.layersPanel.renderLayers();
+        break;
       case 'fields':
-        this.layersPanel.render();
+        this.layersPanel.renderFields();
         break;
       case 'simulation':
         this._renderSimulationPanel();
@@ -194,7 +197,10 @@ export class App {
         <p class="hint">Status: <span id="sim-status">${isPlaying ? 'running' : 'paused'}</span></p>
       </section>
     `;
-    this.panelContent.querySelector('#sim-play-pause')?.addEventListener('click', () => this.store.setPlaying(!this.store.state.playing));
+    this.panelContent.querySelector('#sim-play-pause')?.addEventListener('click', () => {
+      const newState = !this.store.state.playing;
+      this.store.setPlaying(newState);
+    });
     this.panelContent.querySelector('#sim-record')?.addEventListener('click', () => this.store.setRecording(!this.store.state.recording));
     this.panelContent.querySelector('#sim-restart')?.addEventListener('click', () => this.ws.send({ cmd: 'restart' }));
   }

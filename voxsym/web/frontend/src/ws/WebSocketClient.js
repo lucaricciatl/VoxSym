@@ -12,9 +12,11 @@ export class WebSocketClient {
     if (this.closed) return;
     const url = new URL('/ws', window.location.href);
     url.protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    console.log('[WS] connecting to', url.href);
     this.ws = new WebSocket(url.href);
 
     this.ws.addEventListener('open', () => {
+      console.log('[WS] open');
       this.store.setConnected(true);
       this._flush();
     });
@@ -29,12 +31,14 @@ export class WebSocketClient {
       if (this.onFrame) this.onFrame(data);
     });
 
-    this.ws.addEventListener('close', () => {
+    this.ws.addEventListener('close', (ev) => {
+      console.warn('[WS] close', ev.code, ev.reason);
       this.store.setConnected(false);
       setTimeout(() => this._connect(), 1500);
     });
 
-    this.ws.addEventListener('error', () => {
+    this.ws.addEventListener('error', (err) => {
+      console.error('[WS] error', err);
       this.store.setConnected(false);
     });
   }

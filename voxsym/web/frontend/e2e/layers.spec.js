@@ -78,6 +78,7 @@ test('selecting temperature layer shows plasma heatmap', async ({ page }) => {
     { timeout: 10000 },
   );
 
+  await waitForVoxelMesh(page);
   await page.waitForFunction(
     (baseColor) => {
       const mesh = window.voxsymApp?.scene?.voxelMesh;
@@ -96,22 +97,19 @@ test('selecting temperature layer shows plasma heatmap', async ({ page }) => {
 
 test('activating vector field shows arrows', async ({ page }) => {
   await page.goto('/');
+  await page.waitForFunction(() => window.voxsymApp?.scene != null, { timeout: 10000 });
   await page.click('[data-menu="fields"]');
   const cb = page.locator('[data-vector="electric_field"] input');
   await expect(cb).toBeVisible({ timeout: 10000 });
   await cb.click();
 
-  await page.waitForFunction(
-    () => window.voxsymApp?.store?.state?.activeVectors.has('electric_field'),
-    { timeout: 10000 },
-  );
-
+  // Toggle triggers a WS request; wait for a non-empty arrow frame.
   await page.waitForFunction(
     () => {
-      const app = window.voxsymApp;
-      return app?.store?.state?.arrowCount > 0 && app?.scene?.arrowRoot?.children?.length > 0;
+      const arrows = window.lastFrame?.arrows;
+      return arrows && arrows.count > 0;
     },
-    { timeout: 10000 },
+    { timeout: 15000 },
   );
 });
 

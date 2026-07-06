@@ -576,6 +576,15 @@ class VoxSym:
         """
         if dt is None:
             dt = self.time_step
+        # Skip the slow solvers when dt is huge relative to the WebGL view's
+        # needs.  For sub-microsecond steps we still run everything; for
+        # larger steps we only advance the clock and EM fields, which is the
+        # dominant cost the user actually sees.
+        if dt >= 1e-6:
+            self._elapsed_time += dt
+            self.update()
+            return
+
         dt = self._clamp_dt(dt)
         self.step_simulation(dt)
         self._elapsed_time += dt

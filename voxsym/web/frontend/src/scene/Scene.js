@@ -31,7 +31,8 @@ export class Scene {
       0.1,
       1000,
     );
-    this.camera.position.set(8, 8, 12);
+    this.camera.position.set(12, 6, 8);
+    this.camera.up.set(0, 0, 1);
     this.camera.lookAt(0, 0, 0);
 
     this.renderer = new THREE.WebGLRenderer({ antialias: true });
@@ -65,6 +66,8 @@ export class Scene {
     this._axesGroup.visible = true;
     this.scene.add(this._axesGroup);
     this._buildAxes();
+    // Z-up convention for the axis helper (camera already uses Z-up).
+    this._axesGroup.rotation.x = -Math.PI / 2;
 
     window.addEventListener('resize', () => this.onResize());
     this.animate();

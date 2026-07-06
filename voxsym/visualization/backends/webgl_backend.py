@@ -79,7 +79,12 @@ class WebGLBackend(RenderBackend):
         self._latest_frame = payload.encode()
         if self.server is not None:
             self.server.set_latest_frame(payload)
-            self.server.broadcast_frame(payload)
+            # Skip broadcasting empty keep-alive frames when paused.
+            if (
+                payload.voxels.get("count", 0) > 0
+                or getattr(payload, "arrows", {}).get("count", 0) > 0
+            ):
+                self.server.broadcast_frame(payload)
 
     def get_latest_payload(self) -> FramePayload:
         return self._latest_payload
@@ -120,25 +125,34 @@ class WebGLBackend(RenderBackend):
         self._arrow_head_radius = 0.08
         self._arrow_head_length = 0.12
 
-    def set_opacity(self, opacity: float):
-        """Set the global opacity multiplier for rendered voxels and broadcast immediately."""
-        self._opacity = float(opacity)
-        payload = self._latest_payload
-        payload.opacity = self._opacity
-        if payload.voxels.get("count", 0) > 0:
-            per_voxel = getattr(self, "_per_voxel_opacities", None)
-            if per_voxel is not None and len(per_voxel) == payload.voxels["count"]:
-                payload.voxels["opacities"] = [
-                    min(1.0, max(0.0, self._opacity * float(o))) for o in per_voxel
-                ]
-            else:
-                payload.voxels["opacities"] = [
-                    min(1.0, max(0.0, self._opacity)) for _ in range(payload.voxels["count"])
-                ]
-        self._latest_frame = payload.encode()
-        if self.server is not None:
-            self.server.set_latest_frame(payload)
-            self.server.broadcast_frame(payload)
+    def _build_arrows(self) -> Dict[str, Any]:
+        points = getattr(self, "_arrow_points", None)
+        if points is None or points.size == 0:
+            return {"count": 0, "points": [], "colors": [], "directions": [], "base_size": 1.0}
+        n = points.shape[0]
+        base_size = 1.0
+        if self.voxsym.voxels:
+            try:
+                base_size = float(self.voxsym.voxels[0].size * self.voxsym.render_scale)
+            except Exception:
+                base_size = 1.0
+        colors = getattr(self, "_arrow_colors", None)
+        if colors is None or colors.size == 0:
+            colors = np.zeros((n, 3), dtype=np.uint8)
+        directions = getattr(self, "_arrow_directions", None)
+        if directions is None or directions.size == 0:
+            directions = np.zeros((n, 3), dtype=np.float32)
+        # Defensive: ensure all arrays are (n, *) and have the same first dimension.
+        points = points[:n]
+        colors = colors.reshape(-1, 3)[:n]
+        directions = directions.reshape(-1, 3)[:n]
+        return {
+            "count": int(n),
+            "points": points.reshape(n, 6).tolist(),
+            "colors": colors.reshape(n, 3).tolist(),
+            "directions": directions.reshape(n, 3).tolist(),
+            "base_size": base_size,
+        }
 
     def clear(self):
         """Reset the stored frame to empty."""
@@ -164,28 +178,6 @@ class WebGLBackend(RenderBackend):
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
-
-    def _build_arrows(self) -> Dict[str, Any]:
-        points = getattr(self, "_arrow_points", None)
-        if points is None or points.size == 0:
-            return {"count": 0, "points": [], "colors": [], "directions": [], "base_size": 1.0}
-        n = points.shape[0]
-        base_size = 1.0
-        if self.voxsym.voxels:
-            try:
-                base_size = float(self.voxsym.voxels[0].size * self.voxsym.render_scale)
-            except Exception:
-                base_size = 1.0
-        directions = getattr(self, "_arrow_directions", None)
-        if directions is None or directions.size == 0:
-            directions = np.zeros((n, 3), dtype=np.float32)
-        return {
-            "count": int(n),
-            "points": points.reshape(n, 6).tolist(),
-            "colors": self._arrow_colors.reshape(n, 3).tolist(),
-            "directions": directions.reshape(n, 3).tolist(),
-            "base_size": base_size,
-        }
 
     def _active_layers(self) -> List[str]:
         visualizer = getattr(self.voxsym, "_visualizer", None)

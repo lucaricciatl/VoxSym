@@ -197,12 +197,12 @@ def max_stable_dt_for_heat_solver(heat_solver) -> float:
     if k is None or rho_cp is None or dx is None:
         return float("inf")
 
-    dt_min = float("inf")
-    for i in range(len(dx)):
-        if rho_cp[i] > 0 and k[i] > 0 and dx[i] > 0:
-            D = k[i] / rho_cp[i]
-            dt_min = min(dt_min, max_stable_dt_for_diffusion(D, dx[i], dim=3))
-    return dt_min
+    valid = (rho_cp > 0) & (k > 0) & (dx > 0)
+    if not valid.any():
+        return float("inf")
+    D = k[valid] / rho_cp[valid]
+    caps = dx[valid] * dx[valid] / (6.0 * D)
+    return float(caps.min())
 
 
 def max_stable_dt_for_ion_solver(ion_solver) -> float:
@@ -218,21 +218,37 @@ def max_stable_dt_for_ion_solver(ion_solver) -> float:
         return float("inf")
 
     voxels = ion_solver.voxsym.get_voxels()
-    dt_min = float("inf")
-    for i in range(len(dx_arr)):
-        if D_arr[i] > 0 and dx_arr[i] > 0 and z_arr[i] != 0:
-            E_mag = 0.0
+    n = len(dx_arr)
+    dx = dx_arr[:n]
+    D = D_arr[:n]
+    z = z_arr[:n]
+    valid = (D > 0) & (dx > 0)
+    if not valid.any():
+        return float("inf")
+
+    # Build E-field magnitudes for charged voxels; uncharged use pure diffusion.
+    E = np.zeros(n, dtype=np.float64)
+    charged = valid & (z != 0)
+    if charged.any():
+        for i in np.where(charged)[0]:
             if i < len(voxels):
-                E_vec = getattr(voxels[i], "electric_field", None)
-                if E_vec is not None:
-                    E_mag = float(np.linalg.norm(E_vec))
-            dt_min = min(
-                dt_min,
-                max_stable_dt_for_ionic(
-                    D_arr[i], dx_arr[i], E_mag, z=int(z_arr[i]), T=float(T), dim=3
-                ),
-            )
-        elif D_arr[i] > 0 and dx_arr[i] > 0:
-            # No charge: pure diffusion limit
-            dt_min = min(dt_min, max_stable_dt_for_diffusion(D_arr[i], dx_arr[i], dim=3))
-    return dt_min
+                vec = getattr(voxels[i], "electric_field", None)
+                if vec is not None:
+                    E[i] = float(np.linalg.norm(vec))
+
+    dt_diff = np.full(n, np.inf, dtype=np.float64)
+    dt_diff[valid] = dx[valid] * dx[valid] / (6.0 * D[valid])
+
+    dt_drift = np.full(n, np.inf, dtype=np.float64)
+    charged_valid = charged & (E > 0) & (T > 0)
+    if charged_valid.any():
+        mobility = (
+            np.abs(z[charged_valid].astype(np.float64))
+            * ELEMENTARY_CHARGE
+            * D[charged_valid]
+            / (BOLTZMANN_CONSTANT * T)
+        )
+        drift_speed = mobility * E[charged_valid]
+        dt_drift[charged_valid] = dx[charged_valid] / drift_speed
+
+    return float(np.minimum(dt_diff, dt_drift).min())

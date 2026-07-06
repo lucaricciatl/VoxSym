@@ -153,11 +153,20 @@ class WebGLServer:
             self._latest_frame = message
             clients = list(self._clients)
 
+        # If no clients are connected, avoid the cost of serialization
+        # and further downstream IOLoop work.
+        if not clients:
+            return
+
         for client in clients:
             try:
                 client.write_message(message)
             except Exception:
                 pass
+
+        # Keep the latest frame for new connections.
+        with self._lock:
+            self._latest_frame = payload.encode()
 
     def set_latest_frame(self, payload: FramePayload) -> None:
         """Cache the latest frame for newly connecting clients."""
@@ -173,7 +182,7 @@ class WebGLServer:
     # ------------------------------------------------------------------
 
     def handle_command(self, cmd: CommandPayload, client: _WebSocketHandler) -> None:
-        """Apply a client command to the attached VoxSym instance."""
+        """Apply a control command to the attached VoxSym instance."""
         vs = self.voxsym
         try:
             if cmd.cmd == "play":
@@ -212,7 +221,11 @@ class WebGLServer:
                             pass
                     # Re-render immediately so layer changes reflect without waiting for a sim step.
                     if vs._backend_name == "webgl":
-                        vs.render()
+                        viz = getattr(vs, "_visualizer", None)
+                        if viz is not None:
+                            viz.request_render()
+                        else:
+                            vs.render()
             elif cmd.cmd == "set_opacity":
                 if cmd.value is not None:
                     backend = getattr(vs, "_webgl_backend", None)
@@ -220,8 +233,13 @@ class WebGLServer:
                         backend.set_opacity(float(cmd.value))
                     if vs._gui is not None:
                         vs._gui._opacity_value = float(cmd.value)
+                    # Re-render immediately so opacity changes reflect without waiting for a sim step.
                     if vs._backend_name == "webgl":
-                        vs.render()
+                        viz = getattr(vs, "_visualizer", None)
+                        if viz is not None:
+                            viz.request_render()
+                        else:
+                            vs.render()
             elif cmd.cmd == "set_cross_section":
                 viz = getattr(vs, "_visualizer", None)
                 if viz is not None and cmd.axis is not None:
@@ -230,13 +248,14 @@ class WebGLServer:
                         viz.cross_section_pos = float(cmd.pos)
                     # Re-render immediately so the slice is visible without waiting for the next sim step.
                     if vs._backend_name == "webgl":
-                        vs.render()
+                        viz.request_render()
             elif cmd.cmd == "set_arrow_scale":
                 viz = getattr(vs, "_visualizer", None)
                 if viz is not None and cmd.value is not None:
                     viz.field_arrow_scale = float(cmd.value)
+                    # Re-render immediately so arrow scale changes reflect.
                     if vs._backend_name == "webgl":
-                        vs.render()
+                        viz.request_render()
             elif cmd.cmd == "set_time_scale":
                 if cmd.value is not None and cmd.value > 0:
                     vs.set_steps_per_frame(int(cmd.value))

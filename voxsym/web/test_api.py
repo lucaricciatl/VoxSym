@@ -68,6 +68,21 @@ class VoxSymTestClient:
                 return data
         raise TimeoutError("no frame received")
 
+    def receive_frames(self, count: int, timeout: float = 5.0) -> list:
+        """Wait for ``count`` frame-typed messages and return them as a list."""
+        frames = []
+        deadline = time.time() + timeout
+        while len(frames) < count and time.time() < deadline:
+            try:
+                remaining = max(0.1, deadline - time.time())
+                msg = self.ws.recv(timeout=remaining)
+            except TimeoutError:
+                continue
+            data = json.loads(msg)
+            if data.get("type") == "frame":
+                frames.append(data)
+        return frames
+
     def get_frame_after(self, cmd: str, **kwargs: Any) -> Dict[str, Any]:
         """Send a command and return the next frame."""
         self.send(cmd, **kwargs)
