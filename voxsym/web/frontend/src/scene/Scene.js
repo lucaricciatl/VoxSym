@@ -31,7 +31,7 @@ export class Scene {
       0.1,
       1000,
     );
-    this.camera.position.set(12, 6, 8);
+    this.camera.position.set(15, 15, 12);
     this.camera.up.set(0, 0, 1);
     this.camera.lookAt(0, 0, 0);
 
@@ -62,7 +62,9 @@ export class Scene {
     this.voxelMesh = null;
     this.arrowRoot = null;
 
+    // Grid on the XY plane so Z is the vertical (up) axis.
     this._gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0xcccccc);
+    this._gridHelper.rotation.x = -Math.PI / 2;
     this._gridHelper.visible = true;
     this.scene.add(this._gridHelper);
 
@@ -70,8 +72,7 @@ export class Scene {
     this._axesGroup.visible = true;
     this.scene.add(this._axesGroup);
     this._buildAxes();
-    // Z-up convention for the axis helper (camera already uses Z-up).
-    this._axesGroup.rotation.x = -Math.PI / 2;
+    // Z-up convention: camera.up is already (0,0,1), so the +Z arrow points up.
 
     window.addEventListener('resize', () => this.onResize());
     this.animate();
