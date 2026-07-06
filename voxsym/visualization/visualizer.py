@@ -52,7 +52,7 @@ class Visualizer:
         self._base_colors: Dict[int, tuple] = {}
         # Layer parameters
         self.field_arrow_scale = 0.8      # length scale for arrow display
-        self.field_subsample = 4            # show every Nth arrow per axis
+        self.field_subsample = 2            # show every 2nd arrow per axis
         self.field_color_mode = "direction"  # "direction" | "magnitude"
 
         # Cross-section (mobile slicing plane)
@@ -134,6 +134,13 @@ class Visualizer:
             self._active.add(Layer.VOXEL_COLOR)
             self._restore_base_colors()
 
+    def set_layers_from_message(self, active: List[str]):
+        """Bulk-update active layers from a client message and re-render."""
+        self._active = set(active)
+        if not self._active:
+            self._active.add(Layer.VOXEL_COLOR)
+            self._restore_base_colors()
+
     def toggle_layer(self, name: str) -> bool:
         """Flip layer state. Returns new state."""
         is_active = name in self._active
@@ -145,6 +152,10 @@ class Visualizer:
 
     def render(self):
         """Render base voxels + all active overlay layers."""
+        backend = getattr(self.renderer, "backend", None)
+        if backend is not None and hasattr(backend, "clear_arrows"):
+            backend.clear_arrows()
+
         # Compute vector overlays first so their arrow data is available to
         # the backend when we serialize the frame below.
         # Snapshot the set in case another thread mutates it via set_layer().

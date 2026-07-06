@@ -60,7 +60,12 @@ class Recorder:
     # ------------------------------------------------------------------
 
     def record(self, t: float):
-        """Capture the current state of all voxels."""
+        """Capture the current state of all voxels if recording is enabled."""
+        if getattr(self, "_recording", True):
+            self._record_frame(t)
+
+    def _record_frame(self, t: float):
+        """Internal: store one frame of data."""
         voxels = self.voxsym.get_voxels()
         n = len(voxels)
         if n == 0:
@@ -100,6 +105,20 @@ class Recorder:
             np.array([v.polarization for v in voxels], dtype=np.float32))
         self._magnetizations.append(
             np.array([v.magnetization for v in voxels], dtype=np.float32))
+
+    @property
+    def is_recording(self) -> bool:
+        return getattr(self, "_recording", True)
+
+    def start_recording(self):
+        self._recording = True
+
+    def stop_recording(self):
+        self._recording = False
+
+    def toggle_recording(self) -> bool:
+        self._recording = not getattr(self, "_recording", True)
+        return self._recording
 
     @property
     def frame_count(self) -> int:

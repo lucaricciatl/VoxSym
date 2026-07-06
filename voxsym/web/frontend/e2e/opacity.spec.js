@@ -7,21 +7,37 @@ test.beforeAll(async () => {
   backend = await startBackend();
 });
 
-test.afterAll(() => {
-  stopBackend(backend);
+test.afterAll(async () => {
+  await stopBackend(backend);
 });
 
-test('opacity slider changes mesh opacity in real time', async ({ page }) => {
-  await page.goto('/');
-  await page.waitForSelector('#opacity', { timeout: 10000 });
-  const input = page.locator('#opacity');
-  await input.fill('0.2');
-  await input.dispatchEvent('input');
-  await page.waitForTimeout(150);
+function waitForOpacity(page, target) {
+  return page.waitForFunction(
+    (tgt) => {
+      const m = window.voxsymApp?.scene?.voxelMesh?.material;
+      const s = window.voxsymApp?.store?.state;
+      return m?.opacity === tgt && s?.opacity === tgt;
+    },
+    target,
+    { timeout: 3000 }
+  );
+}
 
-  const opacity = await page.evaluate(() => {
-    const mesh = window.voxsymApp?.scene?.voxelMesh;
-    return mesh?.material?.opacity;
-  });
-  expect(opacity).toBeCloseTo(0.2, 1);
+test('opacity slider updates voxel transparency after WS round-trip', async ({ page }) => {
+  await page.goto('/');
+  await page.waitForFunction(() => window.voxsymApp?.store?.state?.connected, null, { timeout: 5000 });
+
+  // Open Layers panel
+  await page.click('[data-menu="layers"]');
+  await expect(page.locator('#opacity')).toBeVisible();
+
+  // Use fill + explicit input event for reliable slider updates.
+  await page.locator('#opacity').fill('0.25');
+  await page.locator('#opacity').dispatchEvent('input');
+
+  await waitForOpacity(page, 0.25);
+
+  await page.locator('#opacity').fill('1');
+  await page.locator('#opacity').dispatchEvent('input');
+  await waitForOpacity(page, 1.0);
 });

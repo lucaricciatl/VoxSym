@@ -23,6 +23,7 @@ export class App {
           <button class="nav-item" data-menu="files">Files</button>
           <button class="nav-item" data-menu="layers">Layers</button>
           <button class="nav-item" data-menu="fields">Fields</button>
+          <button class="nav-item" data-menu="simulation">Simulation</button>
           <button class="nav-item" data-menu="settings">Settings</button>
         </nav>
       </header>
@@ -54,7 +55,6 @@ export class App {
     this._bindTopNav();
     this._bindViewportControls();
 
-    // Default menu: layers
     this._openMenu('layers');
 
     this.store.subscribe((state, patch) => {
@@ -68,6 +68,9 @@ export class App {
         const axesBtn = this.root.querySelector('#toggle-axes');
         gridBtn?.classList.toggle('active', state.showGrid);
         axesBtn?.classList.toggle('active', state.showAxes);
+      }
+      if ((patch.recording !== undefined || patch.playing !== undefined) && this._currentMenu === 'simulation') {
+        this._renderSimulationPanel();
       }
     });
 
@@ -84,13 +87,21 @@ export class App {
       voxelCount: payload.voxels?.count ?? 0,
       arrowCount,
     });
-    if (payload.active_layers && Array.isArray(payload.active_layers)) {
+    if (payload.active_layers && Array.isArray(payload.active_layers) && !this._initialSyncDone) {
+      this._initialSyncDone = true;
       for (const layer of payload.active_layers) {
         if (LAYERS.SCALAR.includes(layer)) {
           this.store.state.activeScalar = layer;
-          break;
         }
       }
+      const vectors = new Set();
+      for (const layer of payload.active_layers) {
+        if (LAYERS.VECTOR.includes(layer)) {
+          vectors.add(layer);
+        }
+      }
+      this.store.state.activeVectors = vectors;
+      this.store._notify({ activeScalar: this.store.state.activeScalar, activeVectors: new Set(vectors) });
     }
   }
 
@@ -115,15 +126,16 @@ export class App {
     if (patch.stepsPerFrame !== undefined) {
       this.ws.send({ cmd: 'set_time_scale', value: state.stepsPerFrame });
     }
-    if (patch.showGrid !== undefined) {
-      this._updateSceneHelpers(state.showGrid, state.showAxes);
+    if (patch.playing !== undefined) {
+      this.ws.send({ cmd: state.playing ? 'play' : 'pause' });
     }
-    if (patch.showAxes !== undefined) {
+    if (patch.showGrid !== undefined || patch.showAxes !== undefined) {
       this._updateSceneHelpers(state.showGrid, state.showAxes);
     }
   }
 
   _openMenu(menu) {
+    this._currentMenu = menu;
     this.panelContent.innerHTML = '';
     this.root.querySelectorAll('.nav-item').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.menu === menu);
@@ -131,17 +143,13 @@ export class App {
     switch (menu) {
       case 'layers':
       case 'fields':
-        // Fields and layers both show the unified layers panel so users can
-        // toggle scalar heatmaps and vector arrows from one place.
         this.layersPanel.render();
         break;
+      case 'simulation':
+        this._renderSimulationPanel();
+        break;
       case 'files':
-        this.panelContent.innerHTML = `
-          <section>
-            <h3>Files</h3>
-            <p>No file operations yet.</p>
-          </section>
-        `;
+        this._renderFilesPanel();
         break;
       case 'settings':
         this.settingsPanel.render();
@@ -149,6 +157,58 @@ export class App {
       default:
         break;
     }
+  }
+
+  _renderSimulationPanel() {
+    this.panelContent.innerHTML = `
+      <section id="simulation-panel">
+        <h3>Simulation</h3>
+        <div class="btn-stack">
+          <button class="btn primary" id="sim-play">Play</button>
+          <button class="btn" id="sim-stop">Stop</button>
+          <button class="btn" id="sim-record">${this.store.state.recording ? 'Stop recording' : 'Record'}</button>
+          <button class="btn" id="sim-restart">Restart</button>
+        </div>
+      </section>
+    `;
+    this.panelContent.querySelector('#sim-play')?.addEventListener('click', () => this.store.setPlaying(true));
+    this.panelContent.querySelector('#sim-stop')?.addEventListener('click', () => this.store.setPlaying(false));
+    this.panelContent.querySelector('#sim-record')?.addEventListener('click', () => this.store.setRecording(!this.store.state.recording));
+    this.panelContent.querySelector('#sim-restart')?.addEventListener('click', () => this.ws.send({ cmd: 'restart' }));
+  }
+
+  _renderFilesPanel() {
+    this.panelContent.innerHTML = `
+      <section id="files-panel">
+        <h3>Files</h3>
+        <div class="btn-stack">
+          <button class="btn" id="load-sim-data">Load simulation data</button>
+          <button class="btn" id="load-sim">Load simulation</button>
+        </div>
+        <p class="hint">Select a JSON/CSV data file or a saved simulation checkpoint.</p>
+        <input type="file" id="file-input" accept=".json,.csv,.h5,.npz,.vxs" style="display:none">
+      </section>
+    `;
+    const fileInput = this.panelContent.querySelector('#file-input');
+    this.panelContent.querySelector('#load-sim-data')?.addEventListener('click', () => {
+      fileInput?.setAttribute('data-mode', 'data');
+      fileInput?.click();
+    });
+    this.panelContent.querySelector('#load-sim')?.addEventListener('click', () => {
+      fileInput?.setAttribute('data-mode', 'sim');
+      fileInput?.click();
+    });
+    fileInput?.addEventListener('change', (e) => {
+      const file = e.target.files[0];
+      if (!file) return;
+      const mode = fileInput.getAttribute('data-mode');
+      if (mode === 'data') {
+        this.ws.send({ cmd: 'load_simulation_data', filename: file.name });
+      } else {
+        this.ws.send({ cmd: 'load_simulation', filename: file.name });
+      }
+      alert(`Sent ${mode} load request for ${file.name}`);
+    });
   }
 
   _bindTopNav() {

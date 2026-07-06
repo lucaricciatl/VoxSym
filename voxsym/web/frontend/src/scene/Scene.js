@@ -1,6 +1,24 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 
+function makeLabelTexture(text, color = '#000000') {
+  const canvas = document.createElement('canvas');
+  const size = 128;
+  canvas.width = size;
+  canvas.height = size;
+  const ctx = canvas.getContext('2d');
+  ctx.fillStyle = 'rgba(255,255,255,0.7)';
+  ctx.fillRect(0, 0, size, size);
+  ctx.font = 'bold 48px system-ui, sans-serif';
+  ctx.fillStyle = color;
+  ctx.textAlign = 'center';
+  ctx.textBaseline = 'middle';
+  ctx.fillText(text, size / 2, size / 2);
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+}
+
 export class Scene {
   constructor(container) {
     this.container = container;
@@ -43,12 +61,54 @@ export class Scene {
     this._gridHelper.visible = true;
     this.scene.add(this._gridHelper);
 
-    this._axesHelper = new THREE.AxesHelper(5);
-    this._axesHelper.visible = true;
-    this.scene.add(this._axesHelper);
+    this._axesGroup = new THREE.Group();
+    this._axesGroup.visible = true;
+    this.scene.add(this._axesGroup);
+    this._buildAxes();
 
     window.addEventListener('resize', () => this.onResize());
     this.animate();
+  }
+
+  _buildAxes() {
+    const axisLength = 5;
+    const shaftRadius = 0.12;
+    const headRadius = 0.32;
+    const headLength = 0.7;
+    const axes = [
+      { dir: new THREE.Vector3(1, 0, 0), color: 0xff0000, label: 'X' },
+      { dir: new THREE.Vector3(0, 1, 0), color: 0x00aa00, label: 'Y' },
+      { dir: new THREE.Vector3(0, 0, 1), color: 0x0066ff, label: 'Z' },
+    ];
+
+    for (const { dir, color, label } of axes) {
+      const material = new THREE.MeshStandardMaterial({
+        color,
+        roughness: 0.3,
+        metalness: 0.2,
+      });
+      const shaftGeo = new THREE.CylinderGeometry(shaftRadius, shaftRadius, axisLength, 16, 1);
+      shaftGeo.translate(0, axisLength / 2, 0);
+      const headGeo = new THREE.ConeGeometry(headRadius, headLength, 16, 1);
+      headGeo.translate(0, axisLength + headLength / 2, 0);
+
+      const shaft = new THREE.Mesh(shaftGeo, material);
+      const head = new THREE.Mesh(headGeo, material);
+      const group = new THREE.Group();
+      group.add(shaft);
+      group.add(head);
+
+      const quaternion = new THREE.Quaternion();
+      quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), dir);
+      group.setRotationFromQuaternion(quaternion);
+      this._axesGroup.add(group);
+
+      const spriteMat = new THREE.SpriteMaterial({ map: makeLabelTexture(label, '#000') });
+      const sprite = new THREE.Sprite(spriteMat);
+      sprite.position.copy(dir.clone().multiplyScalar(axisLength + 1.0));
+      sprite.scale.set(0.8, 0.8, 1);
+      this._axesGroup.add(sprite);
+    }
   }
 
   onResize() {
@@ -82,6 +142,6 @@ export class Scene {
   }
 
   showAxes(visible) {
-    if (this._axesHelper) this._axesHelper.visible = visible;
+    if (this._axesGroup) this._axesGroup.visible = visible;
   }
 }

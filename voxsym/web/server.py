@@ -185,9 +185,31 @@ class WebGLServer:
             elif cmd.cmd == "reset":
                 vs.reset_to_initial()
                 vs.reset_simulation()
+            elif cmd.cmd == "restart":
+                vs.stop()
+                vs.reset_to_initial()
+                vs.reset_simulation()
+                vs.play()
+            elif cmd.cmd == "record":
+                recorder = getattr(vs, "_recorder", None)
+                if recorder is not None:
+                    recorder.toggle_recording()
+            elif cmd.cmd == "load_simulation_data":
+                # Future: load external data file into current simulation
+                logging.info("load_simulation_data requested: %s", cmd.filename)
+            elif cmd.cmd == "load_simulation":
+                # Future: load saved checkpoint/playback file
+                logging.info("load_simulation requested: %s", cmd.filename)
             elif cmd.cmd == "set_layer":
                 if cmd.layer is not None and cmd.active is not None:
                     vs.set_layer(cmd.layer, cmd.active)
+                    # Ensure EM fields are populated before rendering vector overlays,
+                    # otherwise arrows won't appear in static or paused simulations.
+                    if cmd.active and cmd.layer in ("electric_field", "magnetic_field", "current"):
+                        try:
+                            vs.apply_em_fields(t=vs._elapsed_time)
+                        except Exception:
+                            pass
                     # Re-render immediately so layer changes reflect without waiting for a sim step.
                     if vs._backend_name == "webgl":
                         vs.render()

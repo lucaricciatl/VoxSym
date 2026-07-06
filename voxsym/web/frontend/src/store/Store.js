@@ -26,6 +26,8 @@ export class Store {
       opacity: 1.0,
       arrowScale: 0.8,
       stepsPerFrame: 1,
+      playing: false,
+      recording: false,
       // crossSection: { axis: 'off', pos: 0 },  // future implementation
       connected: false,
       time: 0,
@@ -87,6 +89,18 @@ export class Store {
   //   this.state.crossSection = { axis, pos };
   //   this._notify({ crossSection: this.state.crossSection });
   // }
+
+  setPlaying(value) {
+    if (this.state.playing === value) return;
+    this.state.playing = value;
+    this._notify({ playing: value });
+  }
+
+  setRecording(value) {
+    if (this.state.recording === value) return;
+    this.state.recording = value;
+    this._notify({ recording: value });
+  }
 
   setConnected(value) {
     this.state.connected = value;

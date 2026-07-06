@@ -6,7 +6,7 @@ export class LayersPanel {
     this.store = store;
     this.store.subscribe((state, patch) => {
       if (patch.activeScalar !== undefined || patch.activeVectors !== undefined) {
-        this.render();
+        this._updateClasses();
       }
       if (patch.voxelCount !== undefined) {
         const el = this.container.querySelector('#voxel-count');
@@ -22,6 +22,18 @@ export class LayersPanel {
         const val = this.container.querySelector('#opacity-val');
         if (val) val.textContent = state.opacity.toFixed(2);
       }
+    });
+  }
+
+  _updateClasses() {
+    this.container.querySelectorAll('[data-scalar]').forEach((btn) => {
+      btn.classList.toggle('active', btn.dataset.scalar === this.store.state.activeScalar);
+    });
+    this.container.querySelectorAll('[data-vector]').forEach((chip) => {
+      const active = this.store.state.activeVectors.has(chip.dataset.vector);
+      chip.classList.toggle('active', active);
+      const cb = chip.querySelector('input');
+      if (cb) cb.checked = active;
     });
   }
 

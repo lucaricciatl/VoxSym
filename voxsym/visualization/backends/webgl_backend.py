@@ -36,10 +36,10 @@ class WebGLBackend(RenderBackend):
         self._latest_payload: FramePayload = FramePayload.empty()
         self._opacity: float = 1.0
         self._handle: Optional[object] = server
-        self._arrow_points = np.zeros((0, 2, 3), dtype=np.float32)
+        self._arrow_points = np.zeros((0, 6), dtype=np.float32)
         self._arrow_colors = np.zeros((0, 3), dtype=np.uint8)
+        self._arrow_directions = np.zeros((0, 3), dtype=np.float32)
 
-    # ------------------------------------------------------------------
     # RenderBackend API
     # ------------------------------------------------------------------
 
@@ -91,24 +91,34 @@ class WebGLBackend(RenderBackend):
         self._opacity = float(value)
 
     def add_arrows(self, points, colors, shaft_radius, head_radius, head_length, direction=None):
-        """Store arrow data so the next frame encodes it.
-
-        The raw arrow geometry (points, colors) is cached as numpy arrays.
-        Actual shaft/head geometry is reconstructed in the browser from the
-        compact ``points`` array.  Optional ``direction`` gives the normalized
-        vector so the client can render unambiguous orientation even when the
-        tail→head length is very small.
-        """
-        self._arrow_points = np.asarray(points, dtype=np.float32)
-        self._arrow_colors = np.asarray(colors, dtype=np.uint8)
-        self._arrow_shaft_radius = float(shaft_radius)
-        self._arrow_head_radius = float(head_radius)
-        self._arrow_head_length = float(head_length)
+        """Append arrow data so active vector layers are merged in one frame."""
+        # Accept either (n,6) tail-head arrays or (n,2,3) voxel-style arrays.
+        points = np.asarray(points, dtype=np.float32).reshape(-1, 6)
+        colors = np.asarray(colors, dtype=np.uint8).reshape(-1, 3)
         if direction is not None:
-            self._arrow_directions = np.asarray(direction, dtype=np.float32)
+            directions = np.asarray(direction, dtype=np.float32).reshape(-1, 3)
         else:
-            n = self._arrow_points.shape[0]
-            self._arrow_directions = np.zeros((n, 3), dtype=np.float32)
+            n = points.shape[0]
+            directions = np.zeros((n, 3), dtype=np.float32)
+
+        # Concatenate with any arrows already stored this frame.
+        self._arrow_points = np.concatenate([self._arrow_points.reshape(-1, 6), points], axis=0)
+        self._arrow_colors = np.concatenate([self._arrow_colors.reshape(-1, 3), colors], axis=0)
+        self._arrow_directions = np.concatenate([self._arrow_directions.reshape(-1, 3), directions], axis=0)
+
+        # Use the largest geometry parameters across layers for visibility.
+        self._arrow_shaft_radius = max(getattr(self, "_arrow_shaft_radius", 0.04), float(shaft_radius))
+        self._arrow_head_radius = max(getattr(self, "_arrow_head_radius", 0.08), float(head_radius))
+        self._arrow_head_length = max(getattr(self, "_arrow_head_length", 0.12), float(head_length))
+
+    def clear_arrows(self):
+        """Clear accumulated arrow data before a fresh frame."""
+        self._arrow_points = np.zeros((0, 6), dtype=np.float32)
+        self._arrow_colors = np.zeros((0, 3), dtype=np.uint8)
+        self._arrow_directions = np.zeros((0, 3), dtype=np.float32)
+        self._arrow_shaft_radius = 0.04
+        self._arrow_head_radius = 0.08
+        self._arrow_head_length = 0.12
 
     def set_opacity(self, opacity: float):
         """Set the global opacity multiplier for rendered voxels and broadcast immediately."""
@@ -134,7 +144,7 @@ class WebGLBackend(RenderBackend):
         """Reset the stored frame to empty."""
         self._latest_frame = FramePayload.empty().encode()
         self._latest_payload = FramePayload.empty()
-        self._arrow_points = np.zeros((0, 2, 3), dtype=np.float32)
+        self._arrow_points = np.zeros((0, 6), dtype=np.float32)
         self._arrow_colors = np.zeros((0, 3), dtype=np.uint8)
         self._arrow_directions = np.zeros((0, 3), dtype=np.float32)
 
