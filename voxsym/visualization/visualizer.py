@@ -147,7 +147,9 @@ class Visualizer:
         """Render base voxels + all active overlay layers."""
         # Compute vector overlays first so their arrow data is available to
         # the backend when we serialize the frame below.
-        for name in self._active:
+        # Snapshot the set in case another thread mutates it via set_layer().
+        active = list(self._active)
+        for name in active:
             if name in self._callbacks:
                 self._callbacks[name]()
 

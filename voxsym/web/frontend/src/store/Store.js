@@ -26,12 +26,14 @@ export class Store {
       opacity: 1.0,
       arrowScale: 0.8,
       stepsPerFrame: 1,
-      crossSection: { axis: 'off', pos: 0 },
+      // crossSection: { axis: 'off', pos: 0 },  // future implementation
       connected: false,
       time: 0,
       frame: 0,
       voxelCount: 0,
       arrowCount: 0,
+      showGrid: true,
+      showAxes: true,
     };
     this.listeners = new Set();
   }
@@ -81,14 +83,26 @@ export class Store {
     this._notify({ stepsPerFrame: v });
   }
 
-  setCrossSection(axis, pos) {
-    this.state.crossSection = { axis, pos };
-    this._notify({ crossSection: this.state.crossSection });
-  }
+  // setCrossSection(axis, pos) {
+  //   this.state.crossSection = { axis, pos };
+  //   this._notify({ crossSection: this.state.crossSection });
+  // }
 
   setConnected(value) {
     this.state.connected = value;
     this._notify({ connected: value });
+  }
+
+  setShowGrid(value) {
+    if (this.state.showGrid === value) return;
+    this.state.showGrid = value;
+    this._notify({ showGrid: value });
+  }
+
+  setShowAxes(value) {
+    if (this.state.showAxes === value) return;
+    this.state.showAxes = value;
+    this._notify({ showAxes: value });
   }
 
   setFrameMeta({ time, frame, voxelCount, arrowCount }) {

@@ -11,13 +11,13 @@ test.afterAll(() => {
   stopBackend(backend);
 });
 
-test('white background and empty top bar', async ({ page }) => {
+test('white background and top bar items', async ({ page }) => {
   await page.goto('/');
   await page.waitForSelector('#topbar', { timeout: 10000 });
-  await page.waitForSelector('#panel', { timeout: 10000 });
 
-  const topbarText = await page.locator('#topbar').textContent();
-  expect(topbarText?.trim() || '').toBe('');
+  for (const label of ['Files', 'Layers', 'Fields', 'Settings']) {
+    await expect(page.locator(`#topbar button:has-text("${label}")`)).toBeVisible();
+  }
 
   const bg = await page.evaluate(() => {
     const body = document.body;

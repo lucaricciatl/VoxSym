@@ -39,6 +39,14 @@ export class Scene {
     this.voxelMesh = null;
     this.arrowRoot = null;
 
+    this._gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0xcccccc);
+    this._gridHelper.visible = true;
+    this.scene.add(this._gridHelper);
+
+    this._axesHelper = new THREE.AxesHelper(5);
+    this._axesHelper.visible = true;
+    this.scene.add(this._axesHelper);
+
     window.addEventListener('resize', () => this.onResize());
     this.animate();
   }
@@ -67,5 +75,13 @@ export class Scene {
     if (this.arrowRoot) this.scene.remove(this.arrowRoot);
     this.arrowRoot = root;
     if (root) this.scene.add(root);
+  }
+
+  showGrid(visible) {
+    if (this._gridHelper) this._gridHelper.visible = visible;
+  }
+
+  showAxes(visible) {
+    if (this._axesHelper) this._axesHelper.visible = visible;
   }
 }
