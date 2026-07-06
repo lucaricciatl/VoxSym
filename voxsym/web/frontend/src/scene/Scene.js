@@ -49,6 +49,10 @@ export class Scene {
       MIDDLE: THREE.MOUSE.DOLLY,
       RIGHT: THREE.MOUSE.PAN,
     };
+    // Orbit around the Z-axis (camera.up is already Z-up).
+    this.controls.target.set(0, 0, 0);
+    this.controls.screenSpacePanning = false;
+    this.controls.maxPolarAngle = Math.PI;
 
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
     const dir = new THREE.DirectionalLight(0xffffff, 0.8);

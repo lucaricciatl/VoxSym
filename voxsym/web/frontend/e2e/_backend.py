@@ -24,6 +24,7 @@ for x in range(-HALF, HALF):
 vs.add_uniform_electric(2.0, 0.0, 0.0)
 vs.add_uniform_magnetic(0.0, 1.0, 0.0)
 
+vs.disable_heat()
 vs.set_time_step(0.05)
 vs.setup_gui()
 
