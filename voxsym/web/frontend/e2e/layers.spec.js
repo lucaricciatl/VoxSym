@@ -27,7 +27,7 @@ function getVoxelColor(page) {
   });
 }
 
-test('topbar shows Files, Layers, Fields, Simulation, Settings', async ({ page }) => {
+test('topbar shows Simulation, Files, Layers, Fields, Settings', async ({ page }) => {
   await page.goto('/');
   for (const m of ['files', 'layers', 'fields', 'simulation', 'settings']) {
     await expect(page.locator(`[data-menu="${m}"]`)).toBeVisible();

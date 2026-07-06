@@ -34,10 +34,10 @@ export class App {
     this.root.innerHTML = `
       <header id="topbar">
         <nav class="topnav">
+          <button class="nav-item" data-menu="simulation">Simulation</button>
           <button class="nav-item" data-menu="files">Files</button>
           <button class="nav-item" data-menu="layers">Layers</button>
           <button class="nav-item" data-menu="fields">Fields</button>
-          <button class="nav-item" data-menu="simulation">Simulation</button>
           <button class="nav-item" data-menu="settings">Settings</button>
         </nav>
       </header>
