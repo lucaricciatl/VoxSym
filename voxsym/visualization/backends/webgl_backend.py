@@ -48,7 +48,10 @@ class WebGLBackend(RenderBackend):
         positions = np.asarray(positions, dtype=np.float32)
         scales = np.asarray(scales, dtype=np.float32)
         colors = np.asarray(colors, dtype=np.uint8)
-        opacities = np.asarray(opacities, dtype=np.float32) * self._opacity
+        # Preserve per-voxel opacity values as-is; backend set_opacity applies
+        # the global multiplier when broadcasting updates.
+        self._per_voxel_opacities = np.asarray(opacities, dtype=np.float32)
+        opacities = self._per_voxel_opacities * self._opacity
 
         n = positions.shape[0]
         if n == 0:
@@ -108,18 +111,24 @@ class WebGLBackend(RenderBackend):
             self._arrow_directions = np.zeros((n, 3), dtype=np.float32)
 
     def set_opacity(self, opacity: float):
-        """Set the global opacity multiplier for rendered voxels."""
+        """Set the global opacity multiplier for rendered voxels and broadcast immediately."""
         self._opacity = float(opacity)
-        count = self._latest_payload.voxels.get("count", 0)
-        if count > 0:
-            self._latest_payload.voxels["opacities"] = [
-                min(1.0, max(0.0, self._opacity)) for _ in range(count)
-            ]
-        self._latest_payload.opacity = self._opacity
-        self._latest_frame = self._latest_payload.encode()
+        payload = self._latest_payload
+        payload.opacity = self._opacity
+        if payload.voxels.get("count", 0) > 0:
+            per_voxel = getattr(self, "_per_voxel_opacities", None)
+            if per_voxel is not None and len(per_voxel) == payload.voxels["count"]:
+                payload.voxels["opacities"] = [
+                    min(1.0, max(0.0, self._opacity * float(o))) for o in per_voxel
+                ]
+            else:
+                payload.voxels["opacities"] = [
+                    min(1.0, max(0.0, self._opacity)) for _ in range(payload.voxels["count"])
+                ]
+        self._latest_frame = payload.encode()
         if self.server is not None:
-            self.server.set_latest_frame(self._latest_payload)
-            self.server.broadcast_frame(self._latest_payload)
+            self.server.set_latest_frame(payload)
+            self.server.broadcast_frame(payload)
 
     def clear(self):
         """Reset the stored frame to empty."""
@@ -133,10 +142,6 @@ class WebGLBackend(RenderBackend):
     def handle(self) -> Optional[object]:
         """Returns the attached WebGLServer handle."""
         return self._handle
-
-    # ------------------------------------------------------------------
-    # Serialization helpers
-    # ------------------------------------------------------------------
 
     def encode(self) -> str:
         """Return the latest serialized frame payload."""

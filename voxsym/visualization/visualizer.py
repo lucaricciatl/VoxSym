@@ -55,8 +55,6 @@ class Visualizer:
         self.field_arrow_scale = 0.8      # length scale for arrow display
         self.field_subsample = 4            # show every Nth arrow per axis
         self.field_color_mode = "direction"  # "direction" | "magnitude"
-        self.temp_colormap = "hot"        # "hot" | "cool" | "jet"
-        self.temp_range = (250.0, 400.0)  # K
 
         # Cross-section (mobile slicing plane)
         self.cross_section_axis: Optional[str] = None  # None, 'x', 'y', 'z'
@@ -126,10 +124,8 @@ class Visualizer:
                         self._active.discard(other)
                 if name == Layer.VOXEL_COLOR:
                     self._restore_base_colors()
-            # Auto-refresh E/B/current data from the voxels so arrow
-            # overlays are visible immediately when toggled on.
-            if name in (Layer.ELECTRIC_FIELD, Layer.MAGNETIC_FIELD, Layer.CURRENT):
-                self.voxsym.apply_em_fields(t=self.voxsym.elapsed_time)
+            # Vector overlays are drawn by the renderer; do not mutate
+            # scalar colors or EM state here.
         else:
             self._active.discard(name)
             if name in self._handles and self._handles[name] is not None:
@@ -229,29 +225,28 @@ class Visualizer:
                     self._restore_base_colors()
                 break
 
-    def _color_by_temperature(self):
-        """Map voxel temperatures to colors using a fixed plasma colormap.
+    @staticmethod
+    def _normalize(values, colormap):
+        """Normalize *values* to [0, 1] and map them through *colormap*."""
+        if not values:
+            return []
+        v_min = float(min(values))
+        v_max = float(max(values))
+        span = v_max - v_min
+        if span < 1e-12:
+            return [colormap(0.0) for _ in values]
+        return [colormap((v - v_min) / span) for v in values]
 
-        The range is fixed (not adaptive) so absolute temperature changes
-        are visible: as the hot centre cools, its colour shifts from
-        yellow-white → orange → red → purple → black.
-        """
+    def _color_by_temperature(self):
+        """Map voxel temperatures to colors using a normalized plasma colormap."""
         voxels = self.voxsym.get_voxels()
         if not voxels:
             return
-
-        # Fixed range — must match the simulation's expected temperatures
-        t_min, t_max = self.temp_range
-        span = t_max - t_min
-        if span < 1e-3:
-            span = 1.0
-
-        for voxel in voxels:
-            t = voxel.temperature
-            # Clamp to [0, 1] so out-of-range temps hit the colormap ends
-            norm = (t - t_min) / span
-            norm = np.clip(norm, 0.0, 1.0)
-            voxel.color = self._colormap_plasma(norm)
+        colors = self._normalize(
+            [v.temperature for v in voxels], self._colormap_plasma
+        )
+        for voxel, color in zip(voxels, colors):
+            voxel.color = color
 
     def _color_by_material(self):
         voxels = self.voxsym.get_voxels()
@@ -262,22 +257,15 @@ class Visualizer:
                 voxel.color = (180, 180, 180)
 
     def _color_by_ion_concentration(self):
-        """Map ion concentration to a blue-cyan-green-yellow colormap."""
+        """Map ion concentration to a normalized plasma heatmap."""
         voxels = self.voxsym.get_voxels()
         if not voxels:
             return
-
-        concs = [v.ion_concentration for v in voxels]
-        c_min = float(min(concs))
-        c_max = float(max(concs))
-        span = c_max - c_min
-        if span < 1e-6:
-            span = 1.0
-
-        for voxel in voxels:
-            norm = (voxel.ion_concentration - c_min) / span
-            norm = np.clip(norm, 0.0, 1.0)
-            voxel.color = self._colormap_ion(norm)
+        colors = self._normalize(
+            [v.ion_concentration for v in voxels], self._colormap_plasma
+        )
+        for voxel, color in zip(voxels, colors):
+            voxel.color = color
 
     # ------------------------------------------------------------------
     # Vector overlays – drawn as arrows via the renderer backend

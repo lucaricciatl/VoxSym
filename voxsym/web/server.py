@@ -16,6 +16,20 @@ import tornado.websocket
 from voxsym.web.protocol import CommandPayload, FramePayload
 
 STATIC_DIR = os.path.abspath(os.path.join(os.path.dirname(__file__), "static"))
+FRONTEND_DIST_DIR = os.path.abspath(
+    os.path.join(os.path.dirname(__file__), "frontend", "dist")
+)
+
+
+def _resolve_static_dir(static_dir: Optional[str]) -> str:
+    """Use the Vite-built frontend when available, otherwise fall back to static."""
+    if static_dir:
+        return static_dir
+    if os.path.isdir(FRONTEND_DIST_DIR) and os.path.exists(
+        os.path.join(FRONTEND_DIST_DIR, "index.html")
+    ):
+        return FRONTEND_DIST_DIR
+    return STATIC_DIR
 
 
 class _StaticFileHandler(tornado.web.StaticFileHandler):
@@ -90,7 +104,7 @@ class WebGLServer:
         self.voxsym = voxsym
         self.host = host
         self.port = int(port)
-        self.static_dir = static_dir or STATIC_DIR
+        self.static_dir = _resolve_static_dir(static_dir)
 
         self._clients: Set[_WebSocketHandler] = set()
         self._latest_frame: Optional[str] = None
@@ -174,6 +188,9 @@ class WebGLServer:
             elif cmd.cmd == "set_layer":
                 if cmd.layer is not None and cmd.active is not None:
                     vs.set_layer(cmd.layer, cmd.active)
+                    # Re-render immediately so layer changes reflect without waiting for a sim step.
+                    if vs._backend_name == "webgl":
+                        vs.render()
             elif cmd.cmd == "set_opacity":
                 if cmd.value is not None:
                     backend = getattr(vs, "_webgl_backend", None)
@@ -181,16 +198,23 @@ class WebGLServer:
                         backend.set_opacity(float(cmd.value))
                     if vs._gui is not None:
                         vs._gui._opacity_value = float(cmd.value)
+                    if vs._backend_name == "webgl":
+                        vs.render()
             elif cmd.cmd == "set_cross_section":
                 viz = getattr(vs, "_visualizer", None)
                 if viz is not None and cmd.axis is not None:
                     viz.cross_section_axis = None if cmd.axis == "off" else cmd.axis
                     if cmd.pos is not None:
                         viz.cross_section_pos = float(cmd.pos)
+                    # Re-render immediately so the slice is visible without waiting for the next sim step.
+                    if vs._backend_name == "webgl":
+                        vs.render()
             elif cmd.cmd == "set_arrow_scale":
                 viz = getattr(vs, "_visualizer", None)
                 if viz is not None and cmd.value is not None:
                     viz.field_arrow_scale = float(cmd.value)
+                    if vs._backend_name == "webgl":
+                        vs.render()
             elif cmd.cmd == "set_time_scale":
                 if cmd.value is not None and cmd.value > 0:
                     vs.set_steps_per_frame(int(cmd.value))

@@ -9,4 +9,13 @@ __pycache__/
 .DS_Store
 
 # Project outputs
+.coverage
+.venv/
+voxsym.egg-info/
+node_modules/
+voxsym/web/frontend/test-results/
+voxsym/web/frontend/dist/
+.hermes/
+EOF
+_basic_grid_webgl.py
 results/

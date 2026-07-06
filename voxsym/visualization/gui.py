@@ -3,9 +3,8 @@
 This module previously contained a Viser-native ``VoxSymGUI``.  The
 renderer is now browser-based, so the Python-side GUI is intentionally a
 no-op protocol emitter.  It can still be imported and passed around for
-backwards compatibility, but all controls live in
-``voxsym/web/static/js/gui.js``.
-"""
+backwards compatibility, but all controls live in the browser-side npm
+application under ``voxsym/web/frontend/``."""
 
 
 class VoxSymGUI:

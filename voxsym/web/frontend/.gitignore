@@ -1,0 +1,4 @@
+# VoxSym web frontend
+node_modules/
+dist/
+*.log
