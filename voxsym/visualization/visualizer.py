@@ -4,7 +4,6 @@ import numpy as np
 from typing import Dict, List, Set, Callable, Optional
 
 from voxsym.voxel import Voxel
-from voxsym.voxsym import VoxSym
 from voxsym.visualization.renderer import Renderer
 
 
@@ -33,7 +32,7 @@ class Visualizer:
     def __init__(
         self,
         server,
-        voxsym: VoxSym,
+        voxsym,
         renderer: Renderer,
     ):
         self.server = server

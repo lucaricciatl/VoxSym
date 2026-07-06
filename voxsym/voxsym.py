@@ -832,12 +832,28 @@ class VoxSym:
         if self._player is not None:
             self._feed_player()
 
+    def get_latest_payload(self):
+        backend = getattr(self, "_webgl_backend", None)
+        if backend is not None:
+            return backend.get_latest_payload()
+        return None
+
+    def get_latest_frame(self):
+        backend = getattr(self, "_webgl_backend", None)
+        if backend is not None:
+            frame = backend.get_latest_frame()
+            if isinstance(frame, str):
+                import json
+                return json.loads(frame)
+            return frame
+        return None
+
     def auto_camera(self, distance_factor: float = 1.5):
         """Position the camera to frame the entire voxel grid.
 
         Computes the bounding box of all voxels (in render-scale
         coordinates) and places the camera at
-        ``distance_factor × diagonal`` from the centre, looking at
+        ``distance_factor x diagonal`` from the centre, looking at
         the centre.  Call once after building the grid.
 
         Args:

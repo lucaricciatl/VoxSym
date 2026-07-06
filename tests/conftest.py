@@ -1,39 +1,54 @@
-"""Shared pytest fixtures and helpers for VoxSym."""
+"""Shared fixtures and session setup for VoxSym tests."""
+import os
+import subprocess
+import sys
 
 import pytest
 
 from voxsym import VoxSym, Voxel
 from voxsym.material import COPPER, WATER
 
-
-@pytest.fixture
-def empty_vs():
-    """Headless VoxSym instance with no voxels."""
-    return VoxSym(backend=None)
+REPO_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+FRONTEND_DIR = os.path.join(REPO_ROOT, "voxsym", "web", "frontend")
+DIST_INDEX = os.path.join(FRONTEND_DIR, "dist", "index.html")
 
 
-@pytest.fixture
+@pytest.fixture(scope="session", autouse=True)
+def ensure_frontend_built():
+    """Build the Vite frontend once before any test that needs the dist bundle."""
+    if not os.path.exists(DIST_INDEX):
+        subprocess.check_call(
+            ["npm", "run", "build"],
+            cwd=FRONTEND_DIR,
+            stdout=sys.stdout,
+            stderr=sys.stderr,
+        )
+
+
+@pytest.fixture(scope="function")
 def copper_cube_3x3x3():
-    """3×3×3 copper grid with a hot center region, headless."""
+    """A 3x3x3 copper cube centered at the origin."""
     vs = VoxSym(backend=None)
     for x in range(-1, 2):
         for y in range(-1, 2):
             for z in range(-1, 2):
-                v = Voxel(float(x), float(y), float(z), 1.0, temperature=300.0)
+                v = Voxel(float(x), float(y), float(z), size=1.0, color=COPPER.color)
                 v.material = COPPER
                 vs.add_voxel(v)
-    vs.set_region_temperature((0.0, 0.0, 0.0), 0.5, 500.0)
-    return vs
+    yield vs
+    vs.stop()
 
 
-@pytest.fixture
+@pytest.fixture(scope="function")
 def water_cube_3x3x3():
-    """3×3×3 water grid with uniform ion concentration, headless."""
+    """A 3x3x3 water cube centered at the origin with unit concentration."""
     vs = VoxSym(backend=None)
     for x in range(-1, 2):
         for y in range(-1, 2):
             for z in range(-1, 2):
-                v = Voxel(float(x), float(y), float(z), 1.0, ion_concentration=100.0)
+                v = Voxel(float(x), float(y), float(z), size=1.0, color=WATER.color)
                 v.material = WATER
+                v.ion_concentration = 1.0
                 vs.add_voxel(v)
-    return vs
+    yield vs
+    vs.stop()
