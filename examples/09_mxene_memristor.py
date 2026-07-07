@@ -48,6 +48,8 @@ GRAPHENE = Material(
     density=2260.0,                # kg/m³
     ion_diffusivity=1e-12,           # impermeable to ions
     ionic_valence=0,
+    anion_diffusivity=0.0,
+    anion_valence=-1,
     ion_conc_max=0.0,
     color=(60, 60, 60),            # dark gray
 )
@@ -61,6 +63,8 @@ H2SO4_ELECTROLYTE = Material(
     density=1200.0,                # kg/m³
     ion_diffusivity=1e-9,          # m²/s  (H⁺ in water)
     ionic_valence=1,
+    anion_diffusivity=1.2e-9,
+    anion_valence=-1,
     ion_conc_max=1000.0,           # mol/m³  (1M)
     color=(150, 220, 150),         # light green
 )
@@ -88,6 +92,8 @@ GOLD = Material(
     density=19300.0,               # kg/m³
     ion_diffusivity=1e-15,         # impermeable to ions
     ionic_valence=0,
+    anion_diffusivity=0.0,
+    anion_valence=-1,
     ion_conc_max=0.0,
     color=(255, 215, 0),           # gold
 )
@@ -125,8 +131,10 @@ def build_memristor(backend="webgl", port=9000, host="0.0.0.0"):
                     v.temperature = 300.0
                     if mat is H2SO4_ELECTROLYTE:
                         v.ion_concentration = 300.0  # 1M
+                        v.anion_concentration = 300.0  # electroneutral salt
                     if mat is TI3C2_MXENE:
                         v.ion_concentration = 0.0
+                        v.anion_concentration = 0.0
                     vs.add_voxel(v)
 
     # Bottom gold electrodes under the left (graphene) and right (MXene) ends
@@ -172,6 +180,7 @@ def build_memristor(backend="webgl", port=9000, host="0.0.0.0"):
                 v.material = H2SO4_ELECTROLYTE
                 v.temperature = 300.0
                 v.ion_concentration = 300.0  # 1M
+                v.anion_concentration = 300.0  # electroneutral salt
                 vs.add_voxel(v)
 
     return vs

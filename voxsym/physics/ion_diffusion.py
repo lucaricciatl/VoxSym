@@ -47,6 +47,8 @@ class IonDiffusion:
         # Material arrays  (N,)
         self._D = None           # ion diffusivity [m²/s]
         self._z = None           # ionic valence
+        self._Da = None          # anion diffusivity [m²/s]
+        self._za = None          # anion valence
         self._dx = None          # voxel size [m]
         self._conc_max = None    # max concentration [mol/m³]
         self._partition = None   # partition coefficient K (dimensionless)
@@ -108,6 +110,8 @@ class IonDiffusion:
         # --- material arrays ---
         self._D = np.zeros(n, dtype=np.float64)
         self._z = np.zeros(n, dtype=np.int32)
+        self._Da = np.zeros(n, dtype=np.float64)
+        self._za = np.full(n, -1, dtype=np.int32)
         self._dx = np.zeros(n, dtype=np.float64)
         self._conc_max = np.full(n, np.inf, dtype=np.float64)
         self._partition = np.ones(n, dtype=np.float64)
@@ -124,6 +128,8 @@ class IonDiffusion:
             if v.material is not None:
                 self._D[idx] = float(v.material.ion_diffusivity)
                 self._z[idx] = int(v.material.ionic_valence)
+                self._Da[idx] = float(getattr(v.material, "anion_diffusivity", 0.0))
+                self._za[idx] = int(getattr(v.material, "anion_valence", -1))
                 if v.material.ion_conc_max > 0:
                     self._conc_max[idx] = float(v.material.ion_conc_max)
                 self._partition[idx] = float(v.material.partition_coeff)
@@ -154,45 +160,54 @@ class IonDiffusion:
     # ------------------------------------------------------------------
 
     def compute_step(self, dt: Optional[float] = None) -> np.ndarray:
+        """Backward-compatible single-species step (returns cations only)."""
+        cation_new, _ = self.compute_step_both(dt)
+        return cation_new
+
+    def compute_step_both(self, dt: Optional[float] = None) -> Tuple[np.ndarray, np.ndarray]:
+        """Compute one transport step for both cations and anions."""
         self._build_arrays()
         voxels = self.voxsym.get_voxels()
         n = len(voxels)
         if n == 0:
-            return np.array([], dtype=np.float64)
+            empty = np.array([], dtype=np.float64)
+            return empty, empty
 
         if dt is None:
             dt = self.voxsym.get_time_step()
 
-        # Snapshot concentrations & E-field
-        conc = np.array([getattr(v, "ion_concentration", 0.0) for v in voxels],
-                        dtype=np.float64)
         E_field = np.array([getattr(v, "electric_field", np.zeros(3)) for v in voxels],
                            dtype=np.float64)
 
-        # ---- vectorized Fick + Nernst–Planck + interface kinetics ----
-        new_conc = self._transport_step(conc, E_field, dt)
+        cation = np.array([getattr(v, "ion_concentration", 0.0) for v in voxels],
+                         dtype=np.float64)
+        anion = np.array([getattr(v, "anion_concentration", 0.0) for v in voxels],
+                        dtype=np.float64)
 
-        # Clamp
-        new_conc = np.maximum(new_conc, 0.0)
-        np.minimum(new_conc, self._conc_max, out=new_conc)
+        new_cation = self._transport_step(cation, self._D, self._z, E_field, dt)
+        new_anion = self._transport_step(anion, self._Da, self._za, E_field, dt)
+
+        np.clip(new_cation, 0.0, self._conc_max, out=new_cation)
+        np.clip(new_anion, 0.0, self._conc_max, out=new_anion)
 
         # Write adsorbed interface concentration back to voxels
         for i, v in enumerate(voxels):
             v.interface_concentration = float(self._interface_conc[i])
 
-        return new_conc
+        return new_cation, new_anion
 
     def _transport_step(
-        self, conc: np.ndarray, E_field: np.ndarray, dt: float,
+        self, conc: np.ndarray, D_array: np.ndarray, z_array: np.ndarray,
+        E_field: np.ndarray, dt: float,
     ) -> np.ndarray:
-        """Single explicit transport step — fully vectorized."""
+        """Single explicit transport step for one species — fully vectorized."""
         src = self._edge_src
         dst = self._edge_dst
         n = len(conc)
 
-        # Harmonic-mean interface diffusivity
-        D_src = self._D[src]
-        D_dst = self._D[dst]
+        # Harmonic-mean interface diffusivity for this species
+        D_src = D_array[src]
+        D_dst = D_array[dst]
         D_sum = D_src + D_dst
         with np.errstate(divide='ignore', invalid='ignore'):
             D_avg = np.where(D_sum > 0, 2.0 * D_src * D_dst / D_sum, 0.0)
@@ -218,7 +233,7 @@ class IonDiffusion:
         np.add.at(dC_fick, src, w_fick * c_diff)
 
         # ---- Nernst–Planck migration  −(zeD/kBT) ∇·(c E) ----
-        z_src = self._z[src].astype(np.float64)
+        z_src = z_array[src].astype(np.float64)
         has_charge = z_src != 0
 
         dC_mig = np.zeros(n, dtype=np.float64)
@@ -303,6 +318,7 @@ class IonDiffusion:
 
         charges = np.array([v.charge for v in voxels], dtype=np.float64)
         z = self._z.astype(np.float64)
+        za = self._za.astype(np.float64)
         F = 96485.33212  # Faraday constant [C/mol]
 
         if self._last_dQdt is None:

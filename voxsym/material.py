@@ -35,6 +35,8 @@ class Material:
         # Ionic transport (Nernst–Planck / Fick)
         ion_diffusivity: float = 0.0,      # D_ion  [m²/s]
         ionic_valence: int = 1,            # z  (charge number, dimensionless)
+        anion_diffusivity: float = 0.0,    # D_anion  [m²/s]
+        anion_valence: int = -1,           # z_anion
         ion_conc_max: float = 0.0,         # c_max  [mol/m³]
         partition_coeff: float = 1.0,      # K  (c_right = K·c_left at interface)
         interface_capacity: float = 0.0,   # Γ_max  [mol/m²]
@@ -94,6 +96,8 @@ class Material:
         # Ionic transport
         self.ion_diffusivity = float(ion_diffusivity)
         self.ionic_valence = int(ionic_valence)
+        self.anion_diffusivity = float(anion_diffusivity)
+        self.anion_valence = int(anion_valence)
         self.ion_conc_max = float(ion_conc_max)
         self.partition_coeff = float(partition_coeff)
         self.interface_capacity = float(interface_capacity)

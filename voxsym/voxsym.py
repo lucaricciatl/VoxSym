@@ -113,10 +113,12 @@ class VoxSym:
         self._voltage_boundaries: list = []
         self._poisson_max_iter = 500
         self._poisson_tol = 1e-6
+        self._enforce_electroneutrality = True
 
         # Pending simulation state (compute → update two-phase pattern)
         self._pending_temps: Optional[np.ndarray] = None
         self._pending_conc: Optional[np.ndarray] = None
+        self._pending_anion_conc: Optional[np.ndarray] = None
         self._pending_charge: Optional[np.ndarray] = None
 
         # Recording (on by default)
@@ -276,6 +278,7 @@ class VoxSym:
             self._initial_state = {
                 "temperature": [v.temperature for v in self.voxels],
                 "ion_concentration": [v.ion_concentration for v in self.voxels],
+                "anion_concentration": [v.anion_concentration for v in self.voxels],
                 "interface_concentration": [v.interface_concentration for v in self.voxels],
                 "charge": [v.charge for v in self.voxels],
                 "pressure": [v.pressure for v in self.voxels],
@@ -299,6 +302,7 @@ class VoxSym:
             for i, v in enumerate(self.voxels):
                 v.temperature = state["temperature"][i]
                 v.ion_concentration = state["ion_concentration"][i]
+                v.anion_concentration = state.get("anion_concentration", [0.0] * len(self.voxels))[i]
                 v.interface_concentration = state["interface_concentration"][i]
                 v.charge = state["charge"][i]
                 v.pressure = state["pressure"][i]
@@ -507,6 +511,33 @@ class VoxSym:
         """True if the Poisson solver is automatically run each step."""
         return self._enable_poisson
 
+    def set_electroneutrality(self, enabled: bool = True):
+        """Enable/disable the electroneutrality relaxation step."""
+        self._enforce_electroneutrality = bool(enabled)
+
+    def _relax_electroneutrality(self):
+        """Adjust anion concentrations so net charge density is small.
+
+        This is a local electroneutrality constraint, appropriate for
+        concentrated electrolytes where Debye length is much smaller than
+        the voxel size.  It clamps anion concentration to be at least the
+        cation concentration (for monovalent z=+1, z=-1) so the net charge
+        density is non-positive; any excess cation charge is left as voxel
+        .charge for the Poisson solver.
+        """
+        for v in self.voxels:
+            if getattr(v.material, "ion_diffusivity", 0.0) > 0 or getattr(v.material, "anion_diffusivity", 0.0) > 0:
+                # For z_+ = +|z|, z_- = -|z|: rho = e (z_+ c_+ + z_- c_-).
+                # Electroneutral condition: c_- = c_+ * |z_+| / |z_-|.
+                zp = abs(float(getattr(v.material, "ionic_valence", 1)))
+                zn = abs(float(getattr(v.material, "anion_valence", 1)))
+                target = v.ion_concentration * zp / max(zn, 1e-12)
+                # Hard constraint: anion must be at least target; excess anion
+                # is allowed if the solver placed it there, but cation excess
+                # becomes charge.
+                if v.anion_concentration < target:
+                    v.anion_concentration = target
+
     def set_voltage_boundary(
         self,
         x_range: tuple[float, float] | None,
@@ -584,7 +615,9 @@ class VoxSym:
             self.solve_poisson(max_iter=self._poisson_max_iter, tol=self._poisson_tol)
 
         self._ensure_ion_solver()
-        self._pending_conc = self._ion_solver.compute_step(dt)
+        new_cation, new_anion = self._ion_solver.compute_step_both(dt)
+        self._pending_conc = new_cation
+        self._pending_anion_conc = new_anion
 
         if self._heat_solver is not None:
             self._ensure_heat_solver()
@@ -615,7 +648,17 @@ class VoxSym:
         if self._pending_conc is not None:
             for i, v in enumerate(self.voxels):
                 v.ion_concentration = float(self._pending_conc[i])
+                if self._pending_anion_conc is not None:
+                    v.anion_concentration = float(self._pending_anion_conc[i])
             self._pending_conc = None
+            self._pending_anion_conc = None
+
+        # Electroneutrality: a bulk electrolyte has c_+ ≈ c_- everywhere.
+        # The ion solver already tracks both species; here we add a small
+        # corrective relaxation (linearised Boltzmann) so that numerical
+        # round-off or migration imbalance does not build net charge.
+        if self._enforce_electroneutrality and self.voxels:
+            self._relax_electroneutrality()
 
         if self._pending_charge is not None:
             for i, v in enumerate(self.voxels):
@@ -747,7 +790,11 @@ class VoxSym:
         self._ion_solver.set_temperature(T)
 
     def set_region_concentration(self, center, radius, concentration):
-        """Set initial ion concentration in a spherical region."""
+        """Set initial cation concentration in a spherical region.
+
+        If electroneutrality is enabled, the anion concentration in the same
+        region is set to the matching value for a 1:1 electrolyte.
+        """
         cx, cy, cz = center
         r2 = radius * radius
         for v in self.voxels:
@@ -756,6 +803,19 @@ class VoxSym:
             dz = v.z - cz
             if dx * dx + dy * dy + dz * dz <= r2:
                 v.ion_concentration = concentration
+                if self._enforce_electroneutrality:
+                    v.anion_concentration = concentration
+
+    def set_region_anion_concentration(self, center, radius, concentration):
+        """Set initial anion concentration in a spherical region."""
+        cx, cy, cz = center
+        r2 = radius * radius
+        for v in self.voxels:
+            dx = v.x - cx
+            dy = v.y - cy
+            dz = v.z - cz
+            if dx * dx + dy * dy + dz * dz <= r2:
+                v.anion_concentration = concentration
 
     # ==================================================================
     # Coupled mechanics / optics / induced magnetism

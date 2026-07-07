@@ -9,6 +9,7 @@ from typing import Optional
 
 from voxsym.voxsym import VoxSym
 from voxsym.voxel import Voxel
+from voxsym.constants import ELEMENTARY_CHARGE
 
 
 # Physical constants
@@ -184,7 +185,14 @@ def solve_potential_from_charge(
 
     coord_to_idx, edge_src, edge_dst, neighbors, dx = _build_topology(voxels)
 
+    # Net charge density from explicit free charges plus cation/anion imbalance.
     charges = np.array([v.charge for v in voxels], dtype=np.float64)
+    for i, v in enumerate(voxels):
+        zp = float(getattr(v.material, "ionic_valence", 1)) if v.material else 1.0
+        zn = float(getattr(v.material, "anion_valence", -1)) if v.material else -1.0
+        # Add contribution of mobile cations and anions to charge density [C/m³].
+        charges[i] += ELEMENTARY_CHARGE * (zp * v.ion_concentration + zn * v.anion_concentration)
+
     if epsilon is None:
         eps = np.full(n, EPSILON_0, dtype=np.float64)
         for i, v in enumerate(voxels):

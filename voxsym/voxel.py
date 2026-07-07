@@ -9,6 +9,7 @@ class Voxel:
         temperature: float = 300.0,
         pressure: float = 101.3,
         ion_concentration: float = 0.0,
+        anion_concentration: float = 0.0,
         interface_concentration: float = 0.0,
         charge: float = 0.0,
         electric_field=None,
@@ -50,6 +51,7 @@ class Voxel:
         self.optical_intensity = float(optical_intensity)
         # Ionic properties
         self.ion_concentration = float(ion_concentration)
+        self.anion_concentration = float(anion_concentration)
         self.interface_concentration = float(interface_concentration)
     
     def set_coordinates(self, x, y, z):
