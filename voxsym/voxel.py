@@ -53,6 +53,7 @@ class Voxel:
         self.ion_concentration = float(ion_concentration)
         self.anion_concentration = float(anion_concentration)
         self.interface_concentration = float(interface_concentration)
+        self.effective_conductivity: float = 0.0
     
     def set_coordinates(self, x, y, z):
         self.x = x

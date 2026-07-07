@@ -79,6 +79,9 @@ TI3C2_MXENE = Material(
     ion_diffusivity=5e-10,         # m²/s  (intercalated H⁺)
     ionic_valence=1,
     ion_conc_max=800.0,          # mol/m³
+    conductivity_ion_min=1e2,    # high-resistance state (few ions)
+    conductivity_ion_max=1e4,    # low-resistance state (fully intercalated)
+    conductivity_ion_exponent=2.0,
     partition_coeff=2.0,           # H+ preferentially partitions into MXene
     color=(80, 160, 180),          # teal
 )

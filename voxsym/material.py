@@ -15,6 +15,12 @@ class Material:
         conductivity: float = 0.0,          # S/m
         dielectric_constant: float = 1.0,   # relative permittivity ε_r
         resistivity: float | None = None,   # Ω·m (derived from conductivity if None)
+
+        # Memristor: ion-intercalation dependent electronic conductivity
+        conductivity_ion_min: float = 0.0,      # σ when ion conc = 0
+        conductivity_ion_max: float = 0.0,      # σ when ion conc = ion_conc_max
+        conductivity_ion_exponent: float = 1.0,   # power-law exponent
+
         # Thermal
         thermal_conductivity: float = 0.0,  # W/(m·K)
         specific_heat: float = 0.0,         # J/(kg·K)
@@ -50,6 +56,9 @@ class Material:
         # Electrical
         self.conductivity = float(conductivity)
         self.dielectric_constant = float(dielectric_constant)
+        self.conductivity_ion_min = float(conductivity_ion_min)
+        self.conductivity_ion_max = float(conductivity_ion_max)
+        self.conductivity_ion_exponent = float(conductivity_ion_exponent)
         if resistivity is None:
             self.resistivity = 1.0 / self.conductivity if self.conductivity > 0 else float("inf")
         else:
@@ -107,16 +116,29 @@ class Material:
         # Display
         self.color = color
 
-    def __repr__(self):
+    def __repr__(self) -> str:
         return (
             f"Material(name={self.name!r}, "
             f"conductivity={self.conductivity:.3e} S/m, "
-            f"dielectric_constant={self.dielectric_constant}, "
-            f"density={self.density:.1f} kg/m³)"
+            f"sigma_ion=[{self.conductivity_ion_min:.3e}, {self.conductivity_ion_max:.3e}], "
+            f"dielectric_constant={self.dielectric_constant:.2f})"
         )
 
+    def effective_conductivity(self, ion_concentration: float) -> float:
+        """Return ion-intercalation dependent electronic conductivity [S/m]."""
+        if self.conductivity_ion_max <= self.conductivity_ion_min:
+            return self.conductivity
+        c = float(ion_concentration)
+        cmax = max(float(self.ion_conc_max), 1e-12)
+        f = np.clip(c / cmax, 0.0, 1.0)
+        p = self.conductivity_ion_exponent
+        sigma = (
+            self.conductivity_ion_min
+            + (self.conductivity_ion_max - self.conductivity_ion_min) * (f ** p)
+        )
+        return float(sigma)
 
-# ---------------------------------------------------------------------------
+
 # Pre-defined materials (room-temperature values, approximate)
 # ---------------------------------------------------------------------------
 

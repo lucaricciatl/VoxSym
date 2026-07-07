@@ -279,6 +279,7 @@ class VoxSym:
                 "temperature": [v.temperature for v in self.voxels],
                 "ion_concentration": [v.ion_concentration for v in self.voxels],
                 "anion_concentration": [v.anion_concentration for v in self.voxels],
+                "effective_conductivity": [v.effective_conductivity for v in self.voxels],
                 "interface_concentration": [v.interface_concentration for v in self.voxels],
                 "charge": [v.charge for v in self.voxels],
                 "pressure": [v.pressure for v in self.voxels],
@@ -908,8 +909,11 @@ class VoxSym:
         """Compute current density J = σE for every voxel (Ohm's law)."""
         for v in self.voxels:
             if v.material is not None and v.material.conductivity > 0:
-                v.current_density = v.material.conductivity * v.electric_field
+                sigma = v.material.effective_conductivity(v.ion_concentration)
+                v.effective_conductivity = sigma
+                v.current_density = sigma * v.electric_field
             else:
+                v.effective_conductivity = 0.0
                 v.current_density = np.zeros(3)
 
     def clear_em_fields(self):

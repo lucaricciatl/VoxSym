@@ -16,6 +16,7 @@ class Layer:
     TEMPERATURE = "temperature"
     MATERIAL = "material"
     ION_CONCENTRATION = "ion_concentration"
+    EFFECTIVE_CONDUCTIVITY = "effective_conductivity"
 
 
 class Visualizer:
@@ -229,6 +230,7 @@ class Visualizer:
         """If a scalar layer is active, compute colors and write them to voxels."""
         scalar_priority = [
             Layer.ION_CONCENTRATION,
+            Layer.EFFECTIVE_CONDUCTIVITY,
             Layer.TEMPERATURE,
             Layer.MATERIAL,
             Layer.VOXEL_COLOR,
@@ -238,6 +240,9 @@ class Visualizer:
                 if layer == Layer.ION_CONCENTRATION:
                     self._snapshot_base_colors()
                     self._color_by_ion_concentration()
+                elif layer == Layer.EFFECTIVE_CONDUCTIVITY:
+                    self._snapshot_base_colors()
+                    self._color_by_effective_conductivity()
                 elif layer == Layer.TEMPERATURE:
                     self._snapshot_base_colors()
                     self._color_by_temperature()
@@ -287,6 +292,16 @@ class Visualizer:
         colors = self._normalize(
             [v.ion_concentration for v in voxels], self._colormap_plasma
         )
+        for voxel, color in zip(voxels, colors):
+            voxel.color = color
+
+    def _color_by_effective_conductivity(self):
+        """Map ion-intercalation dependent conductivity to viridis."""
+        voxels = self.voxsym.get_voxels()
+        if not voxels:
+            return
+        sigmas = [v.effective_conductivity for v in voxels]
+        colors = self._normalize(sigmas, self._colormap_viridis)
         for voxel, color in zip(voxels, colors):
             voxel.color = color
 
@@ -434,8 +449,30 @@ class Visualizer:
                 v.color = base
 
     @staticmethod
+    def _colormap_viridis(t: float) -> tuple:
+        """Matplotlib-style viridis: dark purple -> teal -> yellow."""
+        t = np.clip(t, 0.0, 1.0)
+        if t < 0.25:
+            r = int(68 + (59 - 68) * (t / 0.25))
+            g = int(1 + (76 - 1) * (t / 0.25))
+            b = int(84 + (192 - 84) * (t / 0.25))
+        elif t < 0.5:
+            r = int(59 + (33 - 59) * ((t - 0.25) / 0.25))
+            g = int(76 + (144 - 76) * ((t - 0.25) / 0.25))
+            b = int(192 + (140 - 192) * ((t - 0.25) / 0.25))
+        elif t < 0.75:
+            r = int(33 + (93 - 33) * ((t - 0.5) / 0.25))
+            g = int(144 + (201 - 144) * ((t - 0.5) / 0.25))
+            b = int(140 + (99 - 140) * ((t - 0.5) / 0.25))
+        else:
+            r = int(93 + (252 - 93) * ((t - 0.75) / 0.25))
+            g = int(201 + (229 - 201) * ((t - 0.75) / 0.25))
+            b = int(99 + (30 - 99) * ((t - 0.75) / 0.25))
+        return (r, g, b)
+
+    @staticmethod
     def _colormap_plasma(t: float) -> tuple:
-        """Matplotlib-style plasma: dark purple → magenta → orange → yellow-white."""
+        """Matplotlib-style plasma: dark purple -> magenta -> orange → yellow-white."""
         t = np.clip(t, 0.0, 1.0)
         # Piecewise-linear control points (r, g, b) in [0, 255]
         stops = [

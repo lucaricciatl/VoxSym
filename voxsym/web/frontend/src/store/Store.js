@@ -1,11 +1,12 @@
 export const LAYERS = {
-  SCALAR: ['temperature', 'ion_concentration', 'material'],
+  SCALAR: ['temperature', 'ion_concentration', 'effective_conductivity', 'material'],
   VECTOR: ['electric_field', 'magnetic_field', 'current'],
 };
 
 const SCALAR_LABELS = {
   temperature: 'Temperature',
   ion_concentration: 'Ion concentration',
+  effective_conductivity: 'σ_eff',
   material: 'Material',
 };
 
