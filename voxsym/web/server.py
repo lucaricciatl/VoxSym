@@ -259,6 +259,25 @@ class WebGLServer:
             elif cmd.cmd == "set_time_scale":
                 if cmd.value is not None and cmd.value > 0:
                     vs.set_steps_per_frame(int(cmd.value))
+            elif cmd.cmd == "set_poisson":
+                vs.set_enable_poisson(bool(cmd.active))
+            elif cmd.cmd == "set_heat":
+                if cmd.active:
+                    vs.enable_heat()
+                else:
+                    vs.disable_heat()
+            elif cmd.cmd == "set_electroneutrality":
+                vs.set_electroneutrality(bool(cmd.active))
+            elif cmd.cmd == "set_butler_volmer":
+                vs.set_enable_butler_volmer(bool(cmd.active))
+            elif cmd.cmd == "set_double_layer":
+                vs.set_enable_double_layer(bool(cmd.active))
+            elif cmd.cmd == "inspect_voxel":
+                try:
+                    data = self._inspect_voxel(int(cmd.voxel_id))
+                    client.write_message(json.dumps({"type": "voxel", "data": data}))
+                except Exception as exc:
+                    logging.warning("inspect_voxel failed: %s", exc)
             elif cmd.cmd == "set_camera":
                 # Camera is handled client-side; this hook allows future server-side overrides.
                 pass
@@ -278,6 +297,30 @@ class WebGLServer:
     # ------------------------------------------------------------------
     # Server lifecycle
     # ------------------------------------------------------------------
+
+    def _inspect_voxel(self, voxel_id: int) -> Dict[str, Any]:
+        """Return a JSON-safe snapshot of a single voxel."""
+        vs = self.voxsym
+        voxel = vs.voxels[voxel_id]
+        material_name = getattr(voxel.material, "name", "unknown") if voxel.material else "unknown"
+        return {
+            "id": voxel_id,
+            "index": voxel_id,
+            "x": float(voxel.x),
+            "y": float(voxel.y),
+            "z": float(voxel.z),
+            "size": float(voxel.size),
+            "material": material_name,
+            "temperature": float(voxel.temperature),
+            "ion_concentration": float(voxel.ion_concentration),
+            "anion_concentration": float(getattr(voxel, "anion_concentration", 0.0)),
+            "effective_conductivity": float(getattr(voxel, "effective_conductivity", 0.0)),
+            "potential": float(getattr(voxel, "phi", getattr(voxel, "potential", 0.0))),
+            "charge": float(getattr(voxel, "charge", 0.0)),
+            "electric_field": [float(v) for v in (voxel.electric_field or [0.0, 0.0, 0.0])],
+            "magnetic_field": [float(v) for v in (voxel.magnetic_field or [0.0, 0.0, 0.0])],
+            "current_density": [float(v) for v in (getattr(voxel, "current_density", [0.0, 0.0, 0.0]))],
+        }
 
     def start(self) -> None:
         """Start the server in a background thread and return immediately."""

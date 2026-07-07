@@ -224,3 +224,49 @@ section p { margin: 4px 0; font-size: 13px; }
 .toggle.active { border-color: var(--accent); color: var(--accent); background: #eef3ff; }
 
 .icon { font-family: monospace; }
+
+
+.overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(255, 255, 255, 0.7);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 50;
+}
+
+.inspector-card {
+  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+  max-width: 320px;
+  width: 90%;
+  box-shadow: 0 8px 24px rgba(0,0,0,0.12);
+}
+
+.inspector-card h4 {
+  margin: 0 0 10px;
+  font-size: 14px;
+}
+
+.inspector-card table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 12px;
+  margin-bottom: 12px;
+}
+
+.inspector-card th,
+.inspector-card td {
+  text-align: left;
+  padding: 4px 2px;
+  border-bottom: 1px solid #eee;
+}
+
+.inspector-card th {
+  color: #777;
+  font-weight: 500;
+  width: 45%;
+}

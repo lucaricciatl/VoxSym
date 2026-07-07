@@ -28,7 +28,11 @@ export class WebSocketClient {
       } catch (err) {
         return;
       }
-      if (this.onFrame) this.onFrame(data);
+      if (data.type === 'voxel') {
+        this.store.setInspectedVoxel(data.data);
+      } else if (this.onFrame) {
+        this.onFrame(data);
+      }
     });
 
     this.ws.addEventListener('close', (ev) => {

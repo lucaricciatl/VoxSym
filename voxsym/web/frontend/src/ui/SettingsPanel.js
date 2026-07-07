@@ -1,18 +1,11 @@
 export class SettingsPanel {
-  constructor(container, store) {
+  constructor(container, store, ws) {
     this.container = container;
     this.store = store;
+    this.ws = ws;
     this.store.subscribe((state, patch) => {
-      if (patch.arrowScale !== undefined) this._updateArrowScale(state.arrowScale);
       if (patch.stepsPerFrame !== undefined) this._updateSteps(state.stepsPerFrame);
     });
-  }
-
-  _updateArrowScale(value) {
-    const input = this.container.querySelector('#arrow-scale');
-    if (input && document.activeElement !== input) input.value = value;
-    const val = this.container.querySelector('#arrow-scale-val');
-    if (val) val.textContent = value.toFixed(2);
   }
 
   _updateSteps(value) {
@@ -25,22 +18,39 @@ export class SettingsPanel {
   render() {
     this.container.innerHTML = `
       <section id="settings-panel">
-        <h3>Settings</h3>
-        <label>Arrow scale <span id="arrow-scale-val">${this.store.state.arrowScale.toFixed(2)}</span>
-          <input id="arrow-scale" type="range" min="0.1" max="3" step="0.05" value="${this.store.state.arrowScale}">
-        </label>
+        <h3>Simulation settings</h3>
         <label>Steps/frame <span id="steps-val">${this.store.state.stepsPerFrame}</span>
           <input id="steps" type="range" min="1" max="200" step="1" value="${this.store.state.stepsPerFrame}">
         </label>
-        <p class="hint">Cross-section slicing is planned for a future release.</p>
+        <div class="btn-stack">
+          <button class="btn" id="sim-set-poisson">Poisson: ${this.store.state.poissonEnabled ? 'on' : 'off'}</button>
+          <button class="btn" id="sim-set-heat">Heat: ${this.store.state.heatEnabled ? 'on' : 'off'}</button>
+          <button class="btn" id="sim-set-electroneutrality">Electroneutrality: ${this.store.state.electroneutralityEnabled ? 'on' : 'off'}</button>
+          <button class="btn" id="sim-set-bv">Butler–Volmer: ${this.store.state.bvEnabled ? 'on' : 'off'}</button>
+          <button class="btn" id="sim-set-dl">Double-layer: ${this.store.state.dlEnabled ? 'on' : 'off'}</button>
+        </div>
       </section>
     `;
 
-    this.container.querySelector('#arrow-scale')?.addEventListener('input', (e) => {
-      this.store.setArrowScale(e.target.value);
-    });
     this.container.querySelector('#steps')?.addEventListener('input', (e) => {
-      this.store.setStepsPerFrame(e.target.value);
+      const v = parseInt(e.target.value, 10);
+      this.store.setStepsPerFrame(v);
     });
+
+    const toggles = [
+      ['sim-set-poisson', 'poissonEnabled', 'set_poisson'],
+      ['sim-set-heat', 'heatEnabled', 'set_heat'],
+      ['sim-set-electroneutrality', 'electroneutralityEnabled', 'set_electroneutrality'],
+      ['sim-set-bv', 'bvEnabled', 'set_butler_volmer'],
+      ['sim-set-dl', 'dlEnabled', 'set_double_layer'],
+    ];
+    for (const [id, stateKey, cmd] of toggles) {
+      this.container.querySelector(`#${id}`)?.addEventListener('click', () => {
+        const next = !this.store.state[stateKey];
+        this.store._setSimSetting(stateKey, next);
+        this.ws.send({ cmd, active: next });
+        this.render();
+      });
+    }
   }
 }

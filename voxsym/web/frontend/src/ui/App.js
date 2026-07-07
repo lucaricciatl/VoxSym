@@ -1,3 +1,4 @@
+import * as THREE from 'three';
 import { Scene } from '../scene/Scene.js';
 import { Store, LAYERS } from '../store/Store.js';
 import { WebSocketClient } from '../ws/WebSocketClient.js';
@@ -5,6 +6,7 @@ import { updateVoxels } from '../render/Voxels.js';
 import { updateArrows } from '../render/Arrows.js';
 import { LayersPanel } from './LayersPanel.js';
 import { SettingsPanel } from './SettingsPanel.js';
+import { InspectPanel } from './InspectPanel.js';
 import './App.css';
 
 function formatTime(seconds) {
@@ -38,6 +40,7 @@ export class App {
           <button class="nav-item" data-menu="files">Files</button>
           <button class="nav-item" data-menu="layers">Layers</button>
           <button class="nav-item" data-menu="fields">Fields</button>
+          <button class="nav-item" data-menu="inspect">Inspect</button>
           <button class="nav-item" data-menu="settings">Settings</button>
         </nav>
       </header>
@@ -65,12 +68,14 @@ export class App {
 
     this.panelContent = this.root.querySelector('#panel-content');
     this.layersPanel = new LayersPanel(this.panelContent, this.store);
-    this.settingsPanel = new SettingsPanel(this.panelContent, this.store);
+    this.settingsPanel = new SettingsPanel(this.panelContent, this.store, this.ws);
+    this.inspectPanel = new InspectPanel(this.panelContent, this.store, this.ws);
 
     this.store.subscribe((state, patch) => this.onStoreChange(state, patch));
 
     this._bindTopNav();
     this._bindViewportControls();
+    this._bindViewportClick();
 
     this._openMenu('layers');
 
@@ -176,6 +181,9 @@ export class App {
       case 'files':
         this._renderFilesPanel();
         break;
+      case 'inspect':
+        this.inspectPanel.render();
+        break;
       case 'settings':
         this.settingsPanel.render();
         break;
@@ -250,6 +258,26 @@ export class App {
     const axesBtn = this.root.querySelector('#toggle-axes');
     gridBtn?.addEventListener('click', () => this.store.setShowGrid(!this.store.state.showGrid));
     axesBtn?.addEventListener('click', () => this.store.setShowAxes(!this.store.state.showAxes));
+  }
+
+  _bindViewportClick() {
+    const viewport = this.root.querySelector('#viewport');
+    if (!viewport) return;
+    viewport.addEventListener('pointerdown', (e) => {
+      if (!this.store.state.inspectMode || !this.scene?.voxelMesh) return;
+      const rect = viewport.getBoundingClientRect();
+      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      const raycaster = new THREE.Raycaster();
+      raycaster.setFromCamera({ x, y }, this.scene.camera);
+      const hits = raycaster.intersectObject(this.scene.voxelMesh, false);
+      if (hits.length > 0) {
+        const id = hits[0].instanceId;
+        this.store.setInspectedVoxel({ id });
+        this.inspectPanel.showVoxelInspector(id);
+        this.store.setInspectMode(false);
+      }
+    });
   }
 
   _updateSceneHelpers(showGrid, showAxes) {

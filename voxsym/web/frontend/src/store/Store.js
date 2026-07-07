@@ -28,7 +28,14 @@ export class Store {
       stepsPerFrame: 1,
       playing: false,
       recording: false,
-      // crossSection: { axis: 'off', pos: 0 },  // future implementation
+      crossSection: { axis: 'off', pos: 0 },
+      inspectMode: false,
+      inspectedVoxel: null,
+      poissonEnabled: true,
+      heatEnabled: false,
+      electroneutralityEnabled: true,
+      bvEnabled: false,
+      dlEnabled: false,
       connected: false,
       time: 0,
       frame: 0,
@@ -85,10 +92,29 @@ export class Store {
     this._notify({ stepsPerFrame: v });
   }
 
-  // setCrossSection(axis, pos) {
-  //   this.state.crossSection = { axis, pos };
-  //   this._notify({ crossSection: this.state.crossSection });
-  // }
+  _setSimSetting(key, value) {
+    if (this.state[key] === value) return;
+    this.state[key] = value;
+    this._notify({ [key]: value });
+  }
+
+  setCrossSection(axis, pos) {
+    const v = { axis, pos: parseFloat(pos) || 0 };
+    if (this.state.crossSection.axis === v.axis && this.state.crossSection.pos === v.pos) return;
+    this.state.crossSection = v;
+    this._notify({ crossSection: v });
+  }
+
+  setInspectMode(value) {
+    if (this.state.inspectMode === value) return;
+    this.state.inspectMode = value;
+    this._notify({ inspectMode: value });
+  }
+
+  setInspectedVoxel(data) {
+    this.state.inspectedVoxel = data;
+    this._notify({ inspectedVoxel: data });
+  }
 
   setPlaying(value) {
     if (this.state.playing === value) return;

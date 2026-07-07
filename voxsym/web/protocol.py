@@ -63,6 +63,12 @@ class CommandPayload:
         set_cross_section {axis, pos}
         set_arrow_scale {value}
         set_time_scale {value}
+        set_poisson {active}
+        set_heat {active}
+        set_electroneutrality {active}
+        set_butler_volmer {active}
+        set_double_layer {active}
+        inspect_voxel {voxel_id}
         seek {frame}
         playback {filename}
     """
@@ -75,6 +81,7 @@ class CommandPayload:
     pos: Optional[float] = None
     frame: Optional[int] = None
     filename: Optional[str] = None
+    voxel_id: Optional[int] = None
 
     @classmethod
     def decode(cls, data: str) -> "CommandPayload":
@@ -88,6 +95,7 @@ class CommandPayload:
             pos=obj.get("pos"),
             frame=obj.get("frame"),
             filename=obj.get("filename"),
+            voxel_id=obj.get("voxel_id"),
         )
 
     def encode(self) -> str:
