@@ -210,7 +210,7 @@ if __name__ == "__main__":
         x_range=(-2 * size, 1 * size),
         y_range=None,
         z_range=(-1 * size, 0),
-        value=lambda t: 5.0 * np.sin(2.0 * np.pi * 50.0 * t),
+        value=lambda t: 5.0 * np.sin(2.0 * np.pi * 5000.0 * t),
     )
     vs.set_voltage_boundary(
         x_range=((GRID_X - 1) * size, (GRID_X + 4) * size),
@@ -218,9 +218,6 @@ if __name__ == "__main__":
         z_range=(-1 * size, 0),
         value=0.0,
     )
-
-    # Small background magnetic field (Tesla) for visual B-field overlay.
-    vs.add_uniform_magnetic(0.0, 0.0, 0.05)
 
     vs.disable_heat()             # isothermal memristor: avoid heat CFL bottleneck
     vs.set_time_step(1e-3)        # 1 ms physical step; CFL caps respected internally
@@ -250,4 +247,4 @@ if __name__ == "__main__":
         stats = vs.concentration_stats()
         print(f"Simulation time: {_fmt_time(vs.elapsed_time)}  |  Ion conc: {stats[0]:.0f} → {stats[1]:.0f} mol/m³")
 
-    vs.run_simulation(sleep=0.02)
+    vs.run_simulation(sleep=0.002)
