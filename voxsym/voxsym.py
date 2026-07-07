@@ -280,6 +280,8 @@ class VoxSym:
                 "ion_concentration": [v.ion_concentration for v in self.voxels],
                 "anion_concentration": [v.anion_concentration for v in self.voxels],
                 "effective_conductivity": [v.effective_conductivity for v in self.voxels],
+                "potential": [v.potential for v in self.voxels],
+                "potential_fixed": [v.potential_fixed for v in self.voxels],
                 "interface_concentration": [v.interface_concentration for v in self.voxels],
                 "charge": [v.charge for v in self.voxels],
                 "pressure": [v.pressure for v in self.voxels],
@@ -304,6 +306,9 @@ class VoxSym:
                 v.temperature = state["temperature"][i]
                 v.ion_concentration = state["ion_concentration"][i]
                 v.anion_concentration = state.get("anion_concentration", [0.0] * len(self.voxels))[i]
+                v.effective_conductivity = state.get("effective_conductivity", [0.0] * len(self.voxels))[i]
+                v.potential = state.get("potential", [0.0] * len(self.voxels))[i]
+                v.potential_fixed = state.get("potential_fixed", [False] * len(self.voxels))[i]
                 v.interface_concentration = state["interface_concentration"][i]
                 v.charge = state["charge"][i]
                 v.pressure = state["pressure"][i]
@@ -789,6 +794,30 @@ class VoxSym:
         """Set the temperature used in the Nernst–Planck mobility term."""
         self._ensure_ion_solver()
         self._ion_solver.set_temperature(T)
+
+    def set_voxel_potential(self, index: int, potential: float, fixed: bool = True):
+        """Set a single voxel to a fixed electric potential [V]."""
+        if 0 <= index < len(self.voxels):
+            v = self.voxels[index]
+            v.potential = float(potential)
+            v.potential_fixed = bool(fixed)
+
+    def set_region_potential(self, center, radius, potential, fixed=True):
+        """Set the electric potential [V] in a spherical region.
+
+        Fixed-potential voxels become Dirichlet nodes during the Poisson solve.
+        Setting ``fixed=False`` simply pre-initializes the potential and leaves
+        it free to evolve.
+        """
+        cx, cy, cz = center
+        r2 = radius * radius
+        for v in self.voxels:
+            dx = v.x - cx
+            dy = v.y - cy
+            dz = v.z - cz
+            if dx * dx + dy * dy + dz * dz <= r2:
+                v.potential = float(potential)
+                v.potential_fixed = bool(fixed)
 
     def set_region_concentration(self, center, radius, concentration):
         """Set initial cation concentration in a spherical region.

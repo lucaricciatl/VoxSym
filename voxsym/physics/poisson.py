@@ -215,6 +215,12 @@ def solve_potential_from_charge(
     fixed = set(dirichlet.keys()) if dirichlet else set()
     for idx, val in (dirichlet or {}).items():
         phi[idx] = val
+
+    # Per-voxel Dirichlet flags from the Voxel object override the mapping.
+    for i, v in enumerate(voxels):
+        if getattr(v, "potential_fixed", False):
+            fixed.add(i)
+            phi[i] = float(getattr(v, "potential", 0.0))
     phi = _solve_potential_jacobi(phi, rhs, neighbors, edge_src, edge_dst, max_iter, tol, fixed=fixed)
 
     E = _compute_electric_field(phi, voxels, edge_src, edge_dst, dx)

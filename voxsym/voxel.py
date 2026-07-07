@@ -54,6 +54,8 @@ class Voxel:
         self.anion_concentration = float(anion_concentration)
         self.interface_concentration = float(interface_concentration)
         self.effective_conductivity: float = 0.0
+        self.potential: float = 0.0          # electric potential [V], Dirichlet when fixed
+        self.potential_fixed: bool = False   # if True, potential is held during Poisson solve
     
     def set_coordinates(self, x, y, z):
         self.x = x
