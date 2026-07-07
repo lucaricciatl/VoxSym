@@ -203,28 +203,28 @@ if __name__ == "__main__":
     vs = build_memristor()
     size = 1e-5  # 10 µm voxel size
 
-    # Apply a fixed potential on the gold electrodes only.  The graphene
-    # and MXene blocks are no longer forced directly; the field is solved
-    # self-consistently from the fixed-potential gold pads plus any space
-    # charge from the H+/anion electrolyte.
-    # Left gold pad: sinusoidal 1 V; right gold pad: 0 V.
-    vs.set_region_potential(
-        center=(0.0, 0.0, -0.5 * size),
-        radius=2.5 * size,
-        potential=lambda t: 1.0 * np.sin(2.0 * np.pi * 1.0 * t),
+    # Apply fixed potentials to the gold pad voxels only.  The graphene
+    # and MXene blocks are driven indirectly through the self-consistent
+    # Poisson field.  Left pad: oscillating 1 V; right pad: 0 V.
+    vs.set_voltage_boundary(
+        x_range=(-2 * size, 1 * size),
+        y_range=None,
+        z_range=(-1 * size, 0),
+        value=lambda t: 5.0 * np.sin(2.0 * np.pi * 50.0 * t),
     )
-    vs.set_region_potential(
-        center=((GRID_X + 2.5) * size, 0.0, -0.5 * size),
-        radius=2.5 * size,
-        potential=0.0,
+    vs.set_voltage_boundary(
+        x_range=((GRID_X - 1) * size, (GRID_X + 4) * size),
+        y_range=None,
+        z_range=(-1 * size, 0),
+        value=0.0,
     )
 
     # Small background magnetic field (Tesla) for visual B-field overlay.
     vs.add_uniform_magnetic(0.0, 0.0, 0.05)
 
     vs.disable_heat()             # isothermal memristor: avoid heat CFL bottleneck
-    vs.set_time_step(1e-4)        # 100 µs per rendered frame; internally sub-stepped to CFL cap
-    vs.set_steps_per_frame(1)     # one step_and_update() call per rendered frame
+    vs.set_time_step(1e-3)        # 1 ms physical step; CFL caps respected internally
+    vs.set_steps_per_frame(10)    # 10 ms of physics per rendered frame
     vs.set_enable_poisson(True)   # self-consistent E from ρ/ε and boundary voltages
     vs.set_poisson_max_iter(200)  # fast enough per frame for this grid size
     vs.set_enable_butler_volmer(True)  # faradaic H+ transfer at metal/electrolyte interfaces
@@ -238,7 +238,7 @@ if __name__ == "__main__":
 
     print(f"MXene Memristor demo.  Open http://{vs.server.host}:{vs.server.port}")
     print("Graphene (dark) | H₂SO₄ (green) | Ti₃C₂ MXene (teal) | Gold (yellow)")
-    print("H⁺ ions oscillate across the flat stack driven by the gold-pad potential.")
+    print("H⁺ ions oscillate across the flat stack driven by the 5 V gold-pad potential.")
 
     @vs.on_gui_update
     def _update_display():
