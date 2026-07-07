@@ -1,3 +1,4 @@
+from typing import Optional, Tuple, Dict, List, Union, Callable
 import os
 import sys
 import inspect
@@ -481,6 +482,25 @@ class VoxSym:
         self._poisson_max_iter = int(max_iter)
         self._poisson_tol = float(tol)
 
+    def _refresh_fixed_region_potentials(self):
+        """Re-evaluate callable region potentials at the current time."""
+        for spec in getattr(self, "_region_potential_specs", []):
+            center = spec["center"]
+            radius = spec["radius"]
+            potential = spec["potential"]
+            fixed = spec["fixed"]
+            cx, cy, cz = center
+            r2 = radius * radius
+            t = float(self.elapsed_time)
+            value = float(potential(t) if callable(potential) else potential)
+            for v in self.voxels:
+                dx = v.x - cx
+                dy = v.y - cy
+                dz = v.z - cz
+                if dx * dx + dy * dy + dz * dz <= r2:
+                    v.potential = value
+                    v.potential_fixed = bool(fixed)
+
     def solve_poisson(self, max_iter: int = 500, tol: float = 1e-6):
         """Solve Poisson's equation from current voxel charges.
 
@@ -494,7 +514,12 @@ class VoxSym:
             max_iter: Maximum Jacobi iterations.
             tol: Convergence tolerance on max |Δφ|.
         """
+        self._refresh_fixed_region_potentials()
         dirichlet = self._eval_voltage_boundaries(self.elapsed_time)
+        # Merge voxel-level fixed potentials into the Dirichlet map.
+        for i, v in enumerate(self.voxels):
+            if getattr(v, "potential_fixed", False):
+                dirichlet[i] = float(getattr(v, "potential", 0.0))
         self._ensure_poisson_solver().solve_potential_from_charge(
             self, max_iter=max_iter, tol=tol, dirichlet=dirichlet,
         )
@@ -802,21 +827,35 @@ class VoxSym:
             v.potential = float(potential)
             v.potential_fixed = bool(fixed)
 
-    def set_region_potential(self, center, radius, potential, fixed=True):
+    def set_region_potential(
+        self,
+        center,
+        radius,
+        potential: Union[float, Callable[[float], float]],
+        fixed=True,
+    ):
         """Set the electric potential [V] in a spherical region.
 
-        Fixed-potential voxels become Dirichlet nodes during the Poisson solve.
-        Setting ``fixed=False`` simply pre-initializes the potential and leaves
-        it free to evolve.
+        ``potential`` may be a float or a callable ``f(elapsed_time)``.  When
+        fixed, the evaluated value is used as a Dirichlet node during every
+        Poisson solve.  The region specification is stored so callable
+        potentials are re-evaluated each time step.
         """
+        if not hasattr(self, "_region_potential_specs"):
+            self._region_potential_specs = []
+        self._region_potential_specs.append(
+            {"center": center, "radius": radius, "potential": potential, "fixed": fixed}
+        )
         cx, cy, cz = center
         r2 = radius * radius
+        t = float(self.elapsed_time)
+        value = float(potential(t) if callable(potential) else potential)
         for v in self.voxels:
             dx = v.x - cx
             dy = v.y - cy
             dz = v.z - cz
             if dx * dx + dy * dy + dz * dz <= r2:
-                v.potential = float(potential)
+                v.potential = value
                 v.potential_fixed = bool(fixed)
 
     def set_region_concentration(self, center, radius, concentration):

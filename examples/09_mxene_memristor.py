@@ -3,7 +3,8 @@
 ====================
 Graphene | H₂SO₄ electrolyte | Ti₃C₂ MXene horizontal stack.
 H⁺ ions in the electrolyte migrate into/out of the MXene under
-an oscillating electric field along X, simulating memristive switching.
+a self-consistent electric field driven by fixed-potential gold pads,
+simulating memristive switching.
 
 Geometry (10 µm voxels):
   [Gr] [Gr] [H₂SO₄] [H₂SO₄] [H₂SO₄] [MXene] [MXene] [MXene] [MXene] [MXene]
@@ -196,20 +197,20 @@ if __name__ == "__main__":
     vs = build_memristor()
     size = 1e-5  # 10 µm voxel size
 
-    # Applied voltage waveform on the left (graphene) and right (MXene)
-    # electrodes.  The gold blocks are held at Dirichlet potentials and drive
-    # H+ migration/diffusion across the electrolyte/MXene stack.
-    vs.set_voltage_boundary(
-        x_range=(-2 * size, 1 * size),
-        y_range=None,
-        z_range=(-1 * size, GRID_Z * size),
-        value=lambda t: 1.0 * np.sin(2.0 * np.pi * 1.0 * t),
+    # Apply a fixed potential on the gold electrodes only.  The graphene
+    # and MXene blocks are no longer forced directly; the field is solved
+    # self-consistently from the fixed-potential gold pads plus any space
+    # charge from the H+/anion electrolyte.
+    # Left gold pad: sinusoidal 1 V; right gold pad: 0 V.
+    vs.set_region_potential(
+        center=(0.0, 0.0, -0.5 * size),
+        radius=2.5 * size,
+        potential=lambda t: 1.0 * np.sin(2.0 * np.pi * 1.0 * t),
     )
-    vs.set_voltage_boundary(
-        x_range=((GRID_X - 1) * size, (GRID_X + 2) * size),
-        y_range=None,
-        z_range=(-1 * size, GRID_Z * size),
-        value=0.0,
+    vs.set_region_potential(
+        center=((GRID_X + 2.5) * size, 0.0, -0.5 * size),
+        radius=2.5 * size,
+        potential=0.0,
     )
 
     # Small background magnetic field (Tesla) for visual B-field overlay.
@@ -229,7 +230,7 @@ if __name__ == "__main__":
 
     print(f"MXene Memristor demo.  Open http://{vs.server.host}:{vs.server.port}")
     print("Graphene (dark) | H₂SO₄ (green) | Ti₃C₂ MXene (teal) | Gold (yellow)")
-    print("H⁺ ions oscillate across the flat stack under AC field.")
+    print("H⁺ ions oscillate across the flat stack driven by the gold-pad potential.")
 
     @vs.on_gui_update
     def _update_display():
