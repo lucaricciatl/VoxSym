@@ -14,6 +14,7 @@ All layers sit flat on the grid floor (z = 0..GRID_Z-1).
 import time
 import sys
 import os
+import numpy as np
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
@@ -41,6 +42,7 @@ def _fmt_time(t: float) -> str:
 GRAPHENE = Material(
     name="graphene",
     conductivity=1.0e6,            # S/m  (highly conductive)
+    dielectric_constant=12.0,      # graphite-like
     thermal_conductivity=2000.0,    # W/(m·K)
     specific_heat=700.0,           # J/(kg·K)
     density=2260.0,                # kg/m³
@@ -53,6 +55,7 @@ GRAPHENE = Material(
 H2SO4_ELECTROLYTE = Material(
     name="h2so4_1M",
     conductivity=40.0,             # S/m  (1M H₂SO₄)
+    dielectric_constant=80.0,    # water-like
     thermal_conductivity=0.5,      # W/(m·K)
     specific_heat=3500.0,          # J/(kg·K)
     density=1200.0,                # kg/m³
@@ -65,18 +68,21 @@ H2SO4_ELECTROLYTE = Material(
 TI3C2_MXENE = Material(
     name="ti3c2_mxene",
     conductivity=2.4e5,            # S/m
+    dielectric_constant=15.0,      # MXene-like
     thermal_conductivity=10.0,     # W/(m·K)
     specific_heat=900.0,           # J/(kg·K)
     density=4500.0,                # kg/m³
     ion_diffusivity=5e-10,         # m²/s  (intercalated H⁺)
     ionic_valence=1,
     ion_conc_max=800.0,          # mol/m³
+    partition_coeff=2.0,           # H+ preferentially partitions into MXene
     color=(80, 160, 180),          # teal
 )
 
 GOLD = Material(
     name="gold",
     conductivity=4.1e7,            # S/m
+    dielectric_constant=1e6,       # metal: effectively infinite permittivity
     thermal_conductivity=320.0,    # W/(m·K)
     specific_heat=130.0,           # J/(kg·K)
     density=19300.0,               # kg/m³
@@ -87,13 +93,15 @@ GOLD = Material(
 )
 
 
-def build_memristor(backend="webgl", port=8080, host="0.0.0.0"):
+GRID_X = 10
+GRID_Y = 10
+GRID_Z = 10
+
+
+def build_memristor(backend="webgl", port=9000, host="0.0.0.0"):
     """Build the horizontal memristor geometry and return a VoxSym instance."""
     vs = VoxSym(backend=backend, port=port, host=host)
 
-    GRID_X = 10
-    GRID_Y = 10
-    GRID_Z = 10
     HALF_Y = GRID_Y // 2
     size = 1e-5  # 10 µm
 
@@ -174,16 +182,32 @@ def build_memristor(backend="webgl", port=8080, host="0.0.0.0"):
 # ---------------------------------------------------------------------------
 if __name__ == "__main__":
     vs = build_memristor()
+    size = 1e-5  # 10 µm voxel size
 
-    # Static electric field along X (visible arrows) plus a small AC ripple.
-    vs.add_uniform_electric(1e5, 0.0, 0.0)
-    vs.add_oscillating_electric(2e4, 0.0, 0.0, frequency=1, phase=0.0)
-    # Uniform magnetic field into the page so B-field overlay has arrows too.
+    # Applied voltage waveform on the left (graphene) and right (MXene)
+    # electrodes.  The gold blocks are held at Dirichlet potentials and drive
+    # H+ migration/diffusion across the electrolyte/MXene stack.
+    vs.set_voltage_boundary(
+        x_range=(-2 * size, 1 * size),
+        y_range=None,
+        z_range=(-1 * size, GRID_Z * size),
+        value=lambda t: 1.0 * np.sin(2.0 * np.pi * 1.0 * t),
+    )
+    vs.set_voltage_boundary(
+        x_range=((GRID_X - 1) * size, (GRID_X + 2) * size),
+        y_range=None,
+        z_range=(-1 * size, GRID_Z * size),
+        value=0.0,
+    )
+
+    # Small background magnetic field (Tesla) for visual B-field overlay.
     vs.add_uniform_magnetic(0.0, 0.0, 0.05)
 
     vs.disable_heat()             # isothermal memristor: avoid heat CFL bottleneck
-    vs.set_time_step(1e-3)        # 1 ms per rendered frame; internally sub-stepped to ion CFL cap
+    vs.set_time_step(1e-4)        # 100 µs per rendered frame; internally sub-stepped to CFL cap
     vs.set_steps_per_frame(1)     # one step_and_update() call per rendered frame
+    vs.set_enable_poisson(True)   # self-consistent E from ρ/ε and boundary voltages
+    vs.set_poisson_max_iter(200)  # fast enough per frame for this grid size
 
     vs.setup_gui()
     vs.set_layer(VoxSym.LAYER_ELECTRIC_FIELD, True)

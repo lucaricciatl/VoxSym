@@ -66,6 +66,7 @@ def _solve_potential_jacobi(
     edge_dst: np.ndarray,
     max_iter: int,
     tol: float,
+    fixed: Optional[set[int]] = None,
 ) -> np.ndarray:
     """Jacobi iteration for  ∇²φ = −ρ/ε  on a uniform-ish voxel grid.
 
@@ -75,8 +76,16 @@ def _solve_potential_jacobi(
     effectively mirrored (φ_outside = φ_inside).  This is equivalent to a
     zero-flux / zero-normal-E-field boundary for the outer surface of the
     voxel cloud.
+
+    Dirichlet nodes listed in ``fixed`` keep their initial value throughout
+    the iteration.
     """
     n = len(phi)
+    fixed = fixed or set()
+    fixed_mask = np.zeros(n, dtype=bool)
+    if fixed:
+        fixed_mask[list(fixed)] = True
+
     for _ in range(max_iter):
         neighbor_sum = np.zeros(n, dtype=np.float64)
         np.add.at(neighbor_sum, edge_src, phi[edge_dst])
@@ -84,11 +93,11 @@ def _solve_potential_jacobi(
         # Rearranged Jacobi update at each voxel:
         new_phi = (neighbor_sum + rho_over_eps) / np.maximum(neighbors, 1)
 
-        # Keep boundary voxels (neighbors == 0) unchanged — avoids div-by-zero.
-        mask = neighbors > 0
+        # Preserve fixed-potential Dirichlet nodes and isolated voxels.
+        new_phi = np.where(fixed_mask | (neighbors == 0), phi, new_phi)
         delta = np.abs(new_phi - phi)
-        max_delta = float(delta[mask].max()) if mask.any() else 0.0
-        phi = np.where(mask, new_phi, phi)
+        max_delta = float(delta[~fixed_mask].max()) if (~fixed_mask).any() else 0.0
+        phi = new_phi
         if max_delta < tol:
             break
     return phi
@@ -101,19 +110,14 @@ def _compute_electric_field(
     edge_dst: np.ndarray,
     dx: np.ndarray,
 ) -> np.ndarray:
-    """Compute E = −∇φ  via central differences along existing edges.
-
-    For each voxel the gradient is averaged over all existing neighbor
-    directions.  Boundaries use the same Neumann mirroring as the solver.
-    """
+    """Compute E = −∇φ  via central differences along existing edges [V/m]."""
     n = len(phi)
     grad = np.zeros((n, 3), dtype=np.float64)
     counts = np.zeros(n, dtype=np.int32)
 
-    # Central difference along each edge direction.
     dphi = phi[edge_dst] - phi[edge_src]
-    # Edge axes: derive from relative voxel centres.
     axes = np.zeros((len(edge_src), 3), dtype=np.float64)
+    edge_len = np.zeros(len(edge_src), dtype=np.float64)
     for e in range(len(edge_src)):
         s = edge_src[e]
         d = edge_dst[e]
@@ -122,18 +126,21 @@ def _compute_electric_field(
         dz_ = voxels[d].z - voxels[s].z
         norm = np.sqrt(dx_ * dx_ + dy_ * dy_ + dz_ * dz_) + 1e-30
         axes[e] = (dx_ / norm, dy_ / norm, dz_ / norm)
+        edge_len[e] = norm
 
+    safe_len = np.where(edge_len > 0, edge_len, 1.0)
+    dphi_over_len = dphi / safe_len
+    # Vectorized accumulation of the 3-vector gradient contribution.
     for axis_idx in range(3):
-        component = dphi * axes[:, axis_idx]
+        component = dphi_over_len * axes[:, axis_idx]
         np.add.at(grad[:, axis_idx], edge_src, component)
-        np.add.at(counts, edge_src, 1)
+    np.add.at(counts, edge_src, 1)
 
-    # Average where there are neighbors; keep zero where isolated.
     valid = counts > 0
     denom = np.where(valid, counts, 1).reshape(-1, 1)
     grad = np.where(valid.reshape(-1, 1), grad / denom, grad)
 
-    # E = −∇φ (gradient points in direction of increasing φ)
+    # E = −∇φ
     return -grad
 
 
@@ -143,6 +150,7 @@ def solve_potential_from_charge(
     tol: float = 1e-6,
     epsilon: Optional[np.ndarray] = None,
     return_phi: bool = False,
+    dirichlet: Optional[dict[int, float]] = None,
 ) -> Optional[np.ndarray]:
     """Solve Poisson's equation from voxel charges and store E = −∇φ.
 
@@ -155,16 +163,19 @@ def solve_potential_from_charge(
         epsilon: Per-voxel permittivity array [F/m].  If None, vacuum
             permittivity is used everywhere.
         return_phi: If True, also return the solved potential array.
+        dirichlet: Optional {voxel_index: fixed_potential_V} mapping for
+            Dirichlet boundaries.
 
     Returns:
         The electric field array (N, 3) if ``return_phi`` is False,
         otherwise a tuple (E, phi).
 
     Boundary conditions:
-        Neumann (zero normal derivative of φ) on the outer surface of the
-        voxel cloud.  This is implicit because only face-connected neighbors
-        are summed; a missing neighbor contributes as if φ_outside = φ_inside,
-        giving  ∂φ/∂n = 0  at the boundary and therefore E_n = 0.
+        Dirichlet where ``dirichlet`` provides a value; otherwise Neumann
+        (zero normal derivative of φ) on the outer surface of the voxel
+        cloud.  Neumann is implicit because only face-connected neighbors are
+        summed; a missing neighbor contributes as if φ_outside = φ_inside,
+        giving  ∂φ/∂n = 0  and therefore E_n = 0.
     """
     voxels = voxsym.get_voxels()
     n = len(voxels)
@@ -176,6 +187,9 @@ def solve_potential_from_charge(
     charges = np.array([v.charge for v in voxels], dtype=np.float64)
     if epsilon is None:
         eps = np.full(n, EPSILON_0, dtype=np.float64)
+        for i, v in enumerate(voxels):
+            epsr = float(getattr(v.material, "dielectric_constant", 1.0)) if v.material else 1.0
+            eps[i] = EPSILON_0 * max(epsr, 1.0)
     else:
         eps = np.asarray(epsilon, dtype=np.float64)
         if len(eps) != n:
@@ -190,7 +204,10 @@ def solve_potential_from_charge(
     rhs = rho_over_eps * (dx ** 2)
 
     phi = np.zeros(n, dtype=np.float64)
-    phi = _solve_potential_jacobi(phi, rhs, neighbors, edge_src, edge_dst, max_iter, tol)
+    fixed = set(dirichlet.keys()) if dirichlet else set()
+    for idx, val in (dirichlet or {}).items():
+        phi[idx] = val
+    phi = _solve_potential_jacobi(phi, rhs, neighbors, edge_src, edge_dst, max_iter, tol, fixed=fixed)
 
     E = _compute_electric_field(phi, voxels, edge_src, edge_dst, dx)
 

@@ -123,7 +123,7 @@ class WebGLServer:
     def _make_server(self) -> tornado.httpserver.HTTPServer:
         """Build an HTTP server that allows rapid port re-use."""
         http_server = tornado.httpserver.HTTPServer(self._app)
-        http_server.bind(self.port, self.host, reuse_port=True)
+        http_server.bind(self.port, self.host, reuse_port=False)
         return http_server
 
     # ------------------------------------------------------------------
@@ -289,7 +289,6 @@ class WebGLServer:
         # so tests and other callers can start multiple servers without
         # "event loop already running" errors.
         self._ioloop = tornado.ioloop.IOLoop()
-        self._http_server.bind(self.port, self.host, reuse_port=True)
         self._started = threading.Event()
 
         def _run():

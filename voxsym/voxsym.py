@@ -110,6 +110,9 @@ class VoxSym:
 
         # Poisson solver control
         self._enable_poisson = False
+        self._voltage_boundaries: list = []
+        self._poisson_max_iter = 500
+        self._poisson_tol = 1e-6
 
         # Pending simulation state (compute → update two-phase pattern)
         self._pending_temps: Optional[np.ndarray] = None
@@ -463,21 +466,27 @@ class VoxSym:
             self._poisson_solver = _poisson_module
         return self._poisson_solver
 
+    def set_poisson_max_iter(self, max_iter: int = 500, tol: float = 1e-6):
+        """Set the default Jacobi iteration budget for the Poisson solve."""
+        self._poisson_max_iter = int(max_iter)
+        self._poisson_tol = float(tol)
+
     def solve_poisson(self, max_iter: int = 500, tol: float = 1e-6):
         """Solve Poisson's equation from current voxel charges.
 
         Computes the electric potential φ from  ∇²φ = −ρ/ε  and stores
         the resulting electric field ``E = −∇φ`` on every voxel, plus the
-        scalar potential as ``voxel.phi``.  The solver uses Neumann boundary
-        conditions (zero normal derivative) on the outer surface of the
-        voxel cloud.
+        scalar potential as ``voxel.phi``.  Dirichlet voltage boundaries
+        set via ``set_voltage_boundary`` override the floating Neumann
+        condition on the outer surface of the voxel cloud.
 
         Args:
             max_iter: Maximum Jacobi iterations.
             tol: Convergence tolerance on max |Δφ|.
         """
+        dirichlet = self._eval_voltage_boundaries(self.elapsed_time)
         self._ensure_poisson_solver().solve_potential_from_charge(
-            self, max_iter=max_iter, tol=tol,
+            self, max_iter=max_iter, tol=tol, dirichlet=dirichlet,
         )
 
     def set_enable_poisson(self, enabled: bool = True):
@@ -497,6 +506,48 @@ class VoxSym:
     def enable_poisson(self) -> bool:
         """True if the Poisson solver is automatically run each step."""
         return self._enable_poisson
+
+    def set_voltage_boundary(
+        self,
+        x_range: tuple[float, float] | None,
+        y_range: tuple[float, float] | None,
+        z_range: tuple[float, float] | None,
+        value: "Union[float, Callable[[float], float]]",
+    ):
+        """Add a Dirichlet voltage boundary on a rectangular voxel region.
+
+        ``value`` may be a constant (V) or a callable ``value(t)``.  Voxels
+        whose centre coordinates fall inside all specified ranges are held at
+        that potential during the Poisson solve.  Multiple boundaries may
+        be set; later calls add to the list.  Use ``None`` for a range to
+        match all coordinates along that axis.
+        """
+        self._voltage_boundaries.append({
+            "x_range": x_range,
+            "y_range": y_range,
+            "z_range": z_range,
+            "value": value,
+        })
+
+    def _eval_voltage_boundaries(self, t: float = 0.0) -> dict[int, float]:
+        """Return {voxel_index: fixed_phi} for all active voltage boundaries."""
+        out: dict[int, float] = {}
+        for spec in self._voltage_boundaries:
+            xr, yr, zr = spec["x_range"], spec["y_range"], spec["z_range"]
+            val = spec["value"]
+            if callable(val):
+                val = float(val(t))
+            else:
+                val = float(val)
+            for idx, v in enumerate(self.voxels):
+                if xr is not None and not (xr[0] <= v.x <= xr[1]):
+                    continue
+                if yr is not None and not (yr[0] <= v.y <= yr[1]):
+                    continue
+                if zr is not None and not (zr[0] <= v.z <= zr[1]):
+                    continue
+                out[idx] = val
+        return out
 
     def _ensure_renderer(self):
         if self._renderer is None:
@@ -530,7 +581,7 @@ class VoxSym:
         """
         # Optional Poisson solve: compute E from charge density before ions move.
         if self._enable_poisson:
-            self.solve_poisson()
+            self.solve_poisson(max_iter=self._poisson_max_iter, tol=self._poisson_tol)
 
         self._ensure_ion_solver()
         self._pending_conc = self._ion_solver.compute_step(dt)
