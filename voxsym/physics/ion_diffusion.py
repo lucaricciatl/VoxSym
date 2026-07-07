@@ -212,6 +212,20 @@ class IonDiffusion:
         with np.errstate(divide='ignore', invalid='ignore'):
             D_avg = np.where(D_sum > 0, 2.0 * D_src * D_dst / D_sum, 0.0)
 
+        # Block transport across interfaces where either side cannot host
+        # this species.  Metal/graphene electrodes are impermeable walls for
+        # the mobile ion; only electrolyte and insertion materials exchange.
+        can_host = np.array([
+            getattr(self.voxsym.voxels[i].material, "ion_conc_max", 0.0) > 0
+            if self.voxsym.voxels[i].material is not None else False
+            for i in dst
+        ], dtype=bool) & np.array([
+            getattr(self.voxsym.voxels[i].material, "ion_conc_max", 0.0) > 0
+            if self.voxsym.voxels[i].material is not None else False
+            for i in src
+        ], dtype=bool)
+        D_avg = np.where(can_host, D_avg, 0.0)
+
         # ---- Fickian diffusion with partition-corrected jump condition ----
         # At equilibrium across a boundary between material A and B:
         #     c_B / c_A = K_B / K_A .

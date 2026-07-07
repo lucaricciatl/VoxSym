@@ -64,6 +64,8 @@ def butler_volmer_current(
     kT = BOLTZMANN_CONSTANT * T
     # dimensionless argument
     arg = z * ELEMENTARY_CHARGE * eta / kT
+    # Clamp the dimensionless argument to avoid float overflow / inf.
+    arg = np.clip(arg, -50.0, 50.0)
     j = i0 * (np.exp((1.0 - alpha) * arg) - np.exp(-alpha * arg))
     return j
 
@@ -155,7 +157,10 @@ class InterfacialElectrochemistry:
 
         T = float(getattr(self.voxsym, "temperature", 300.0))
 
-        phi = np.array([getattr(v, "potential", 0.0) for v in voxels], dtype=np.float64)
+        phi = np.array([
+            float(getattr(v, "phi", 0.0) or getattr(v, "potential", 0.0))
+            for v in voxels
+        ], dtype=np.float64)
         phi_src = phi[src]
         phi_dst = phi[dst]
 
@@ -186,24 +191,43 @@ class InterfacialElectrochemistry:
         if apply_faradaic:
             if species == "cation":
                 conc = np.array([v.ion_concentration for v in voxels], dtype=np.float64)
-                z = int(voxels[0].material.ionic_valence) if voxels[0].material is not None else 1
+                z_arr = np.array([
+                    int(getattr(voxels[i].material, "ionic_valence", 0)) if voxels[i].material is not None else 0
+                    for i in src
+                ], dtype=np.int32)
             else:
                 conc = np.array([v.anion_concentration for v in voxels], dtype=np.float64)
-                z = int(voxels[0].material.anion_valence) if voxels[0].material is not None else -1
+                z_arr = np.array([
+                    int(getattr(voxels[i].material, "anion_valence", 0)) if voxels[i].material is not None else 0
+                    for i in src
+                ], dtype=np.int32)
             conc_src = conc[src]
             conc_dst = conc[dst]
 
+            # Use a representative non-zero z for the overpotential scale; per-edge flux uses z_arr.
+            z_repr = int(np.max(np.abs(z_arr))) if np.any(z_arr != 0) else 1
             j = butler_volmer_current(
                 phi_src, phi_dst, conc_src, conc_dst,
-                i0, alpha, z, T,
+                i0, alpha, z_repr, T,
             )
             # Limit j to avoid blow-up with tiny concentrations / large eta
             j = np.clip(j, -1e9, 1e9)
-            active = heterogeneous & (i0 > 0)
+            # Only allow faradaic ion transfer into a material that can host
+            # the species (non-zero capacity or diffusivity).  Otherwise the
+            # ion would be injected into an impermeable electrode and clipped
+            # away, draining the electrolyte unphysically.
+            mat_dst = [voxels[i].material for i in dst]
+            can_host_dst = np.array([
+                (getattr(m, "ion_conc_max", 0.0) > 0 or getattr(m, "ion_diffusivity", 0.0) > 0)
+                if m is not None else False
+                for m in mat_dst
+            ], dtype=bool)
+            active = heterogeneous & (i0 > 0) & can_host_dst & (z_arr != 0)
 
             # Faradaic flux [mol/(m²·s)]; positive = oxidation at src
             flux = np.zeros_like(j)
-            flux[active] = j[active] / (z * FARADAY)
+            z_active = z_arr[active].astype(np.float64)
+            flux[active] = j[active] / (z_active * FARADAY)
             # Accumulate into bulk concentration change: dC/dt = −flux·A / V
             vol = dx ** 3
             dC_src = -(flux[active] * face_area[active] / vol[active])

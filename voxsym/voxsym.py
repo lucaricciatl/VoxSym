@@ -55,6 +55,7 @@ class VoxSym:
     LAYER_TEMPERATURE = "temperature"
     LAYER_MATERIAL = "material"
     LAYER_ION_CONCENTRATION = "ion_concentration"
+    LAYER_EFFECTIVE_CONDUCTIVITY = "effective_conductivity"
 
     def __init__(self, port: int = 8080, *, host: str = "0.0.0.0",
                  backend: Optional[str] = "webgl",
@@ -1138,6 +1139,13 @@ class VoxSym:
             self._ensure_visualizer()
         if self._visualizer is not None:
             self._visualizer.set_layer(name, active)
+
+    def set_active_scalar_layer(self, name: str):
+        """Set the active scalar layer for voxel coloring."""
+        if self._visualizer is None:
+            self._ensure_visualizer()
+        if self._visualizer is not None and hasattr(self._visualizer, "activate_scalar"):
+            self._visualizer.activate_scalar(name)
 
     def toggle_layer(self, name: str) -> bool:
         """Flip a layer's state.  Returns the new state."""

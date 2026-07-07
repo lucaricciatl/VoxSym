@@ -51,11 +51,18 @@ def test_interfacial_sources_on_two_voxels():
         charge_transfer_coefficient=0.5,
         stern_capacitance=0.2,
         ionic_valence=1,
+        ion_conc_max=1000.0,
+        ion_diffusivity=1e-9,
+    )
+    m2 = Material(
+        name="host",
+        ion_conc_max=1000.0,
+        ion_diffusivity=1e-10,
     )
     v1 = Voxel(x=0.0, y=0.0, z=0.0, size=1e-5)
     v2 = Voxel(x=1e-5, y=0.0, z=0.0, size=1e-5)
     v1.material = m
-    v2.material = Material(name="metal")
+    v2.material = m2
     v1.ion_concentration = 100.0
     v2.ion_concentration = 100.0
     v1.potential = 0.1

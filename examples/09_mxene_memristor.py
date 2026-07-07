@@ -227,12 +227,17 @@ if __name__ == "__main__":
     vs.set_steps_per_frame(10)    # 10 ms of physics per rendered frame
     vs.set_enable_poisson(True)   # self-consistent E from ρ/ε and boundary voltages
     vs.set_poisson_max_iter(200)  # fast enough per frame for this grid size
-    vs.set_enable_butler_volmer(True)  # faradaic H+ transfer at metal/electrolyte interfaces
-    vs.set_enable_double_layer(True)   # Stern capacitive screening at interfaces
+    # Note: Butler–Volmer and double-layer solvers are available via
+    # set_enable_butler_volmer() / set_enable_double_layer() but are left
+    # disabled here. They require parameter tuning at this voxel scale; the
+    # visible memristive switching is driven by Nernst–Planck H+ migration
+    # and concentration-dependent MXene conductivity.
 
     vs.setup_gui()
     vs.set_layer(VoxSym.LAYER_ELECTRIC_FIELD, True)
     vs.set_layer(VoxSym.LAYER_CURRENT, True)
+    vs.set_layer(VoxSym.LAYER_ION_CONCENTRATION, True)
+    vs.set_active_scalar_layer("ion_concentration")
     vs.auto_camera()
     vs.opacity = 0.4
 

@@ -101,17 +101,23 @@ class Visualizer:
                 look_at=(cx, cy, cz),
             )
 
+    def activate_scalar(self, name: str):
+        """Activate a scalar layer and disable the other scalar layers."""
+        self.set_layer(name, active=True)
+
     def set_layer(self, name: str, active: bool = True):
         """Toggle a visualization layer on/off.
 
         Scalar color layers (temperature, material, ion concentration,
-        base colour) are mutually exclusive: activating one deactivates the
-        others.  Vector overlay layers (E/B-field, current) can coexist.
+        base colour, effective conductivity) are mutually exclusive: activating
+        one deactivates the others.  Vector overlay layers (E/B-field, current)
+        can coexist.
         """
         scalar_layers = {
             Layer.TEMPERATURE,
             Layer.MATERIAL,
             Layer.ION_CONCENTRATION,
+            Layer.EFFECTIVE_CONDUCTIVITY,
         }
         if active:
             self._active.add(name)
