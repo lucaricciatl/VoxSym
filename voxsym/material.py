@@ -48,6 +48,12 @@ class Material:
         interface_capacity: float = 0.0,   # Γ_max  [mol/m²]
         adsorption_rate: float = 0.0,      # k_a  [m³/(mol·s)]
         desorption_rate: float = 0.0,      # k_d  [1/s]
+
+        # Interfacial electrochemistry
+        exchange_current_density: float = 0.0,    # i₀ [A/m²]
+        charge_transfer_coefficient: float = 0.5, # α (dimensionless, 0..1)
+        reorganization_energy: float = 0.0,       # λ [eV], for Marcus kinetics
+        stern_capacitance: float = 0.0,          # C_S [F/m²]
         # Display / meta
         color: tuple[int, int, int] = (200, 200, 200),
     ):
@@ -112,6 +118,12 @@ class Material:
         self.interface_capacity = float(interface_capacity)
         self.adsorption_rate = float(adsorption_rate)
         self.desorption_rate = float(desorption_rate)
+
+        # Interfacial electrochemistry
+        self.exchange_current_density = float(exchange_current_density)
+        self.charge_transfer_coefficient = float(charge_transfer_coefficient)
+        self.reorganization_energy = float(reorganization_energy)
+        self.stern_capacitance = float(stern_capacitance)
 
         # Display
         self.color = color

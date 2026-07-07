@@ -116,6 +116,11 @@ class VoxSym:
         self._poisson_tol = 1e-6
         self._enforce_electroneutrality = True
 
+        # Interfacial electrochemistry
+        self._enable_butler_volmer = False
+        self._enable_double_layer = False
+        self._interfacial_echem = None
+
         # Pending simulation state (compute → update two-phase pattern)
         self._pending_temps: Optional[np.ndarray] = None
         self._pending_conc: Optional[np.ndarray] = None
@@ -546,6 +551,14 @@ class VoxSym:
         """Enable/disable the electroneutrality relaxation step."""
         self._enforce_electroneutrality = bool(enabled)
 
+    def set_enable_butler_volmer(self, enabled: bool = True):
+        """Enable/disable Butler–Volmer faradaic charge transfer."""
+        self._enable_butler_volmer = bool(enabled)
+
+    def set_enable_double_layer(self, enabled: bool = True):
+        """Enable/disable Stern double-layer capacitive screening."""
+        self._enable_double_layer = bool(enabled)
+
     def _relax_electroneutrality(self):
         """Adjust anion concentrations so net charge density is small.
 
@@ -683,6 +696,25 @@ class VoxSym:
                     v.anion_concentration = float(self._pending_anion_conc[i])
             self._pending_conc = None
             self._pending_anion_conc = None
+
+        # Interfacial electrochemistry: Butler–Volmer charge transfer and
+        # Stern double-layer screening.
+        if self._enable_butler_volmer or self._enable_double_layer:
+            if self._interfacial_echem is None:
+                from voxsym.physics.interfacial_electrochemistry import (
+                    InterfacialElectrochemistry,
+                )
+                self._interfacial_echem = InterfacialElectrochemistry(self)
+            dC_echem, dQ_echem = self._interfacial_echem.compute_sources(
+                dt=self.get_time_step(),
+                apply_faradaic=self._enable_butler_volmer,
+                apply_double_layer=self._enable_double_layer,
+            )
+            for i, v in enumerate(self.voxels):
+                if self._enable_butler_volmer:
+                    v.ion_concentration = float(max(0.0, v.ion_concentration + dC_echem[i]))
+                if self._enable_double_layer:
+                    v.charge += float(dQ_echem[i])
 
         # Electroneutrality: a bulk electrolyte has c_+ ≈ c_- everywhere.
         # The ion solver already tracks both species; here we add a small

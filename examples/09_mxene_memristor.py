@@ -67,6 +67,9 @@ H2SO4_ELECTROLYTE = Material(
     anion_diffusivity=1.2e-9,
     anion_valence=-1,
     ion_conc_max=1000.0,           # mol/m³  (1M)
+    exchange_current_density=1.0,  # A/m² (proton reduction at metal/electrolyte)
+    charge_transfer_coefficient=0.5,
+    stern_capacitance=0.2,         # F/m² (rough metal/electrolyte)
     color=(150, 220, 150),         # light green
 )
 
@@ -84,6 +87,9 @@ TI3C2_MXENE = Material(
     conductivity_ion_max=1e4,    # low-resistance state (fully intercalated)
     conductivity_ion_exponent=2.0,
     partition_coeff=2.0,           # H+ preferentially partitions into MXene
+    exchange_current_density=5.0,  # A/m² (fast H+ insertion/extraction)
+    charge_transfer_coefficient=0.5,
+    stern_capacitance=0.3,         # F/m² (MXene/electrolyte interface)
     color=(80, 160, 180),          # teal
 )
 
@@ -221,6 +227,8 @@ if __name__ == "__main__":
     vs.set_steps_per_frame(1)     # one step_and_update() call per rendered frame
     vs.set_enable_poisson(True)   # self-consistent E from ρ/ε and boundary voltages
     vs.set_poisson_max_iter(200)  # fast enough per frame for this grid size
+    vs.set_enable_butler_volmer(True)  # faradaic H+ transfer at metal/electrolyte interfaces
+    vs.set_enable_double_layer(True)   # Stern capacitive screening at interfaces
 
     vs.setup_gui()
     vs.set_layer(VoxSym.LAYER_ELECTRIC_FIELD, True)
