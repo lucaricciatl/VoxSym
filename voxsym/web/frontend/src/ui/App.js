@@ -4,6 +4,8 @@ import { Store, LAYERS } from '../store/Store.js';
 import { WebSocketClient } from '../ws/WebSocketClient.js';
 import { updateVoxels } from '../render/Voxels.js';
 import { updateArrows } from '../render/Arrows.js';
+import { Colorbar } from './Colorbar.js';
+import { Recorder } from './Recorder.js';
 import { LayersPanel } from './LayersPanel.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { InspectPanel } from './InspectPanel.js';
@@ -64,6 +66,7 @@ export class App {
     `;
 
     this.scene = new Scene(this.root.querySelector('#viewport'));
+    this.colorbar = new Colorbar(this.root, this.store);
 
     this.ws = new WebSocketClient(this.store, (payload) => this.onFrame(payload));
 
@@ -102,10 +105,19 @@ export class App {
         gridBtn?.classList.toggle('active', state.showGrid);
         axesBtn?.classList.toggle('active', state.showAxes);
       }
+      if (patch.recording !== undefined) {
+        if (state.recording) this.recorder?.start();
+        else this.recorder?.stop();
+      }
       if ((patch.recording !== undefined || patch.playing !== undefined || patch.timeStep !== undefined || patch.stepsPerFrame !== undefined) && this._currentMenu === 'simulation') {
         this._renderSimulationPanel();
       }
     });
+
+    this.recorder = null;
+    if (this.scene?.renderer?.domElement) {
+      this.recorder = new Recorder(this.store, this.scene.renderer.domElement);
+    }
 
     window.voxsymApp = this;
     window.store = this.store;
@@ -121,6 +133,10 @@ export class App {
       frame: payload.frame_index ?? 0,
       voxelCount: payload.voxels?.count ?? 0,
       arrowCount,
+    });
+    this.store.setScalarMeta({
+      scalarRange: payload.scalar_range,
+      colormap: payload.colormap,
     });
 
     const positions = payload.voxels?.positions;
@@ -227,7 +243,8 @@ export class App {
           <button class="btn primary" id="sim-play-pause">${isPlaying ? 'Pause' : 'Play'}</button>
           <button class="btn" id="sim-step"${isPlaying ? ' disabled' : ''}>Step once</button>
           <button class="btn" id="sim-reset-time">Reset time</button>
-          <button class="btn" id="sim-record">${this.store.state.recording ? 'Stop recording' : 'Record'}</button>
+          <button class="btn" id="sim-record">${this.store.state.recording ? 'Stop recording' : 'Record WebM'}</button>
+          <button class="btn" id="sim-frame">Download frame</button>
           <button class="btn" id="sim-restart">Restart</button>
         </div>
         <p class="hint">Status: <span id="sim-status">${isPlaying ? 'running' : 'paused'}</span></p>
@@ -250,6 +267,7 @@ export class App {
       this.ws.send({ cmd: 'reset_time' });
     });
     this.panelContent.querySelector('#sim-record')?.addEventListener('click', () => this.store.setRecording(!this.store.state.recording));
+    this.panelContent.querySelector('#sim-frame')?.addEventListener('click', () => this.recorder?.downloadFrame());
     this.panelContent.querySelector('#sim-restart')?.addEventListener('click', () => this.ws.send({ cmd: 'restart' }));
     this.panelContent.querySelector('#dt-input')?.addEventListener('change', (e) => {
       this.store.setTimeStep(e.target.value);

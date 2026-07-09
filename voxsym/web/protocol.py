@@ -19,6 +19,9 @@ class FramePayload:
     voxels: Dict[str, Any] = field(default_factory=dict)
     arrows: Dict[str, Any] = field(default_factory=dict)
     active_layers: List[str] = field(default_factory=lambda: ["voxel_color"])
+    scalar_layer: str = "material"
+    scalar_range: List[float] = field(default_factory=lambda: [0.0, 1.0])
+    colormap: str = "viridis"
 
     @classmethod
     def empty(cls, time: float = 0.0) -> "FramePayload":

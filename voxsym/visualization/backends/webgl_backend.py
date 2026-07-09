@@ -73,6 +73,9 @@ class WebGLBackend(RenderBackend):
                 },
                 arrows=self._build_arrows(),
                 active_layers=self._active_layers(),
+                scalar_layer=str(self._scalar_layer()),
+                scalar_range=list(self._scalar_range()),
+                colormap=str(self._colormap()),
             )
 
         self._latest_payload = payload
@@ -184,3 +187,29 @@ class WebGLBackend(RenderBackend):
         if visualizer is None:
             return ["voxel_color"]
         return sorted(getattr(visualizer, "_active", {"voxel_color"}))
+
+    def _scalar_layer(self) -> str:
+        visualizer = getattr(self.voxsym, "_visualizer", None)
+        if visualizer is None:
+            return "material"
+        return getattr(visualizer, "_active_scalar", "material")
+
+    def _colormap(self) -> str:
+        layer = self._scalar_layer()
+        cmap_map = {
+            "ion_concentration": "plasma",
+            "effective_conductivity": "viridis",
+            "temperature": "plasma",
+            "material": "material",
+        }
+        return cmap_map.get(layer, "viridis")
+
+    def _scalar_range(self) -> tuple:
+        visualizer = getattr(self.voxsym, "_visualizer", None)
+        if visualizer is None:
+            return (0.0, 1.0)
+        layer = self._scalar_layer()
+        r = getattr(visualizer, "_scalar_range", {}).get(layer)
+        if r is None:
+            return (0.0, 1.0)
+        return (float(r[0]), float(r[1]))

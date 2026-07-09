@@ -46,6 +46,8 @@ export class Store {
       bbox: { x: [-1, 1], y: [-1, 1], z: [-1, 1] },
       showGrid: true,
       showAxes: true,
+      scalarRange: [0, 1],
+      colormap: 'viridis',
     };
     this.listeners = new Set();
   }
@@ -184,6 +186,23 @@ export class Store {
   setFrameMeta({ time, frame, voxelCount, arrowCount }) {
     Object.assign(this.state, { time, frame, voxelCount, arrowCount });
     this._notify({ time, frame, voxelCount, arrowCount });
+  }
+
+  setScalarMeta({ scalarRange, colormap }) {
+    let changed = false;
+    if (scalarRange !== undefined) {
+      const lo = parseFloat(scalarRange[0]);
+      const hi = parseFloat(scalarRange[1]);
+      if (!Number.isNaN(lo) && !Number.isNaN(hi) && (this.state.scalarRange[0] !== lo || this.state.scalarRange[1] !== hi)) {
+        this.state.scalarRange = [lo, hi];
+        changed = true;
+      }
+    }
+    if (colormap !== undefined && this.state.colormap !== colormap) {
+      this.state.colormap = colormap;
+      changed = true;
+    }
+    if (changed) this._notify({ scalarRange: this.state.scalarRange, colormap: this.state.colormap });
   }
 
   setBBox(bbox) {
