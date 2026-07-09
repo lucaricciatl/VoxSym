@@ -26,6 +26,7 @@ export class Store {
       opacity: 1.0,
       arrowScale: 0.8,
       stepsPerFrame: 1,
+      timeStep: 1e-3,
       playing: false,
       recording: false,
       crossSection: { axis: 'off', pos: 0 },
@@ -94,6 +95,13 @@ export class Store {
     this._notify({ stepsPerFrame: v });
   }
 
+  setTimeStep(value) {
+    const v = parseFloat(value);
+    if (Number.isNaN(v) || v <= 0 || this.state.timeStep === v) return;
+    this.state.timeStep = v;
+    this._notify({ timeStep: v });
+  }
+
   _setSimSetting(key, value) {
     if (this.state[key] === value) return;
     this.state[key] = value;
@@ -116,6 +124,26 @@ export class Store {
   setInspectedVoxel(data) {
     this.state.inspectedVoxel = data;
     this._notify({ inspectedVoxel: data });
+  }
+
+  syncConfig(cfg) {
+    const patch = {};
+    const map = {
+      time_step: 'timeStep',
+      steps_per_frame: 'stepsPerFrame',
+      poisson_enabled: 'poissonEnabled',
+      heat_enabled: 'heatEnabled',
+      electroneutrality_enabled: 'electroneutralityEnabled',
+      butler_volmer_enabled: 'bvEnabled',
+      double_layer_enabled: 'dlEnabled',
+    };
+    for (const [k, v] of Object.entries(map)) {
+      if (cfg[k] !== undefined && this.state[v] !== cfg[k]) {
+        this.state[v] = cfg[k];
+        patch[v] = cfg[k];
+      }
+    }
+    if (Object.keys(patch).length) this._notify(patch);
   }
 
   setHoveredVoxel(data) {

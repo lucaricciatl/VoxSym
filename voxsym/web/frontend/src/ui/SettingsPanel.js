@@ -5,6 +5,18 @@ export class SettingsPanel {
     this.ws = ws;
     this.store.subscribe((state, patch) => {
       if (patch.stepsPerFrame !== undefined) this._updateSteps(state.stepsPerFrame);
+      if (patch.timeStep !== undefined) {
+        const el = this.container.querySelector('#dt-val');
+        if (el) el.textContent = Number(state.timeStep).toExponential(2);
+      }
+      const boolKeys = ['poissonEnabled','heatEnabled','electroneutralityEnabled','bvEnabled','dlEnabled'];
+      const ids = ['sim-set-poisson','sim-set-heat','sim-set-electroneutrality','sim-set-bv','sim-set-dl'];
+      for (let i = 0; i < boolKeys.length; i++) {
+        if (patch[boolKeys[i]] !== undefined) {
+          const btn = this.container.querySelector(`#${ids[i]}`);
+          if (btn) btn.textContent = btn.textContent.split(':')[0] + ': ' + (state[boolKeys[i]] ? 'on' : 'off');
+        }
+      }
     });
   }
 

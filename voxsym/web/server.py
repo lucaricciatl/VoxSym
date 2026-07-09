@@ -60,6 +60,7 @@ class _WebSocketHandler(tornado.websocket.WebSocketHandler):
                 self.write_message(payload)
             except Exception:
                 pass
+        self._server.broadcast_config()
 
     def on_message(self, message) -> None:
         try:
@@ -133,6 +134,21 @@ class WebGLServer:
     def add_client(self, client: _WebSocketHandler) -> None:
         with self._lock:
             self._clients.add(client)
+
+    def broadcast_config(self) -> None:
+        """Send current simulation configuration to every connected client."""
+        if self.voxsym is None:
+            return
+        cfg = self.voxsym.get_config()
+        data = json.dumps({"type": "config", **cfg})
+        with self._lock:
+            clients = list(self._clients)
+        for c in clients:
+            try:
+                c.write_message(data)
+            except Exception:
+                with self._lock:
+                    self._clients.discard(c)
 
     def remove_client(self, client: _WebSocketHandler) -> None:
         with self._lock:
@@ -259,6 +275,15 @@ class WebGLServer:
             elif cmd.cmd == "set_time_scale":
                 if cmd.value is not None and cmd.value > 0:
                     vs.set_steps_per_frame(int(cmd.value))
+            elif cmd.cmd == "set_time_step":
+                if cmd.value is not None and cmd.value > 0:
+                    vs.set_time_step(float(cmd.value))
+            elif cmd.cmd == "single_step":
+                vs.single_step()
+            elif cmd.cmd == "reset_time":
+                vs.reset_time()
+            elif cmd.cmd == "get_config":
+                client.write_message(json.dumps({"type": "config", **vs.get_config()}))
             elif cmd.cmd == "set_poisson":
                 vs.set_enable_poisson(bool(cmd.active))
             elif cmd.cmd == "set_heat":

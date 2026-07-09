@@ -30,6 +30,8 @@ export class WebSocketClient {
       }
       if (data.type === 'voxel') {
         this.store.setInspectedVoxel(data.data);
+      } else if (data.type === 'config') {
+        this.store.syncConfig(data);
       } else if (this.onFrame) {
         this.onFrame(data);
       }

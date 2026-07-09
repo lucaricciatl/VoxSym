@@ -1664,7 +1664,7 @@ class VoxSym:
         self.space_resolution = resolution
 
     def set_time_step(self, time_step):
-        self.time_step = time_step
+        self.dt = float(time_step)
 
     def set_steps_per_frame(self, n: int):
         """Set how many simulation sub-steps are taken per rendered frame.
@@ -1674,6 +1674,39 @@ class VoxSym:
         1\u00b5s per frame).
         """
         self._steps_per_frame = max(1, int(n))
+
+    def single_step(self):
+        """Advance physics by one time step."""
+        self.step_and_update(self.time + self.dt)
+
+    def reset_time(self):
+        """Reset simulation time and fields."""
+        self.time = 0.0
+        if getattr(self, "_initial_state", None) is not None:
+            try:
+                self.restore_state(self._initial_state)
+            except Exception:
+                pass
+        for v in self.voxels:
+            if not getattr(v, "potential_fixed", False):
+                v.phi = 0.0
+            v.charge = 0.0
+            v.electric_field = [0.0, 0.0, 0.0]
+            v.current_density = [0.0, 0.0, 0.0]
+            v.magnetic_field = [0.0, 0.0, 0.0]
+
+    def get_config(self):
+        """JSON-safe current simulation configuration."""
+        return {
+            "time_step": float(getattr(self, "dt", 1e-3)),
+            "steps_per_frame": int(getattr(self, "_steps_per_frame", 1)),
+            "time": float(getattr(self, "time", 0.0)),
+            "poisson_enabled": bool(getattr(self, "_enable_poisson", False)),
+            "heat_enabled": bool(getattr(self, "_heat_solver_enabled", True)),
+            "electroneutrality_enabled": bool(getattr(self, "_enforce_electroneutrality", False)),
+            "butler_volmer_enabled": bool(getattr(self, "_enable_butler_volmer", False)),
+            "double_layer_enabled": bool(getattr(self, "_enable_double_layer", False)),
+        }
 
     def add_voxel(self, voxel):
         with self._voxels_lock:

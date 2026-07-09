@@ -102,7 +102,7 @@ export class App {
         gridBtn?.classList.toggle('active', state.showGrid);
         axesBtn?.classList.toggle('active', state.showAxes);
       }
-      if ((patch.recording !== undefined || patch.playing !== undefined) && this._currentMenu === 'simulation') {
+      if ((patch.recording !== undefined || patch.playing !== undefined || patch.timeStep !== undefined || patch.stepsPerFrame !== undefined) && this._currentMenu === 'simulation') {
         this._renderSimulationPanel();
       }
     });
@@ -175,6 +175,9 @@ export class App {
     if (patch.stepsPerFrame !== undefined) {
       this.ws.send({ cmd: 'set_time_scale', value: state.stepsPerFrame });
     }
+    if (patch.timeStep !== undefined) {
+      this.ws.send({ cmd: 'set_time_step', value: state.timeStep });
+    }
     if (patch.playing !== undefined) {
       this.ws.send({ cmd: state.playing ? 'play' : 'pause' });
     }
@@ -215,23 +218,45 @@ export class App {
 
   _renderSimulationPanel() {
     const isPlaying = this.store.state.playing;
+    const dt = this.store.state.timeStep;
+    const steps = this.store.state.stepsPerFrame;
     this.panelContent.innerHTML = `
       <section id="simulation-panel">
         <h3>Simulation</h3>
         <div class="btn-stack">
           <button class="btn primary" id="sim-play-pause">${isPlaying ? 'Pause' : 'Play'}</button>
+          <button class="btn" id="sim-step"${isPlaying ? ' disabled' : ''}>Step once</button>
+          <button class="btn" id="sim-reset-time">Reset time</button>
           <button class="btn" id="sim-record">${this.store.state.recording ? 'Stop recording' : 'Record'}</button>
           <button class="btn" id="sim-restart">Restart</button>
         </div>
         <p class="hint">Status: <span id="sim-status">${isPlaying ? 'running' : 'paused'}</span></p>
+        <h4>Timing</h4>
+        <label>Time step <span id="dt-val">${dt.toExponential(2)}</span> s
+          <input id="dt-input" type="number" min="1e-9" max="1" step="any" value="${dt}">
+        </label>
+        <label>Steps/frame <span id="steps-val">${steps}</span>
+          <input id="steps-input" type="range" min="1" max="100" step="1" value="${steps}">
+        </label>
       </section>
     `;
     this.panelContent.querySelector('#sim-play-pause')?.addEventListener('click', () => {
-      const newState = !this.store.state.playing;
-      this.store.setPlaying(newState);
+      this.store.setPlaying(!this.store.state.playing);
+    });
+    this.panelContent.querySelector('#sim-step')?.addEventListener('click', () => {
+      if (!this.store.state.playing) this.ws.send({ cmd: 'single_step' });
+    });
+    this.panelContent.querySelector('#sim-reset-time')?.addEventListener('click', () => {
+      this.ws.send({ cmd: 'reset_time' });
     });
     this.panelContent.querySelector('#sim-record')?.addEventListener('click', () => this.store.setRecording(!this.store.state.recording));
     this.panelContent.querySelector('#sim-restart')?.addEventListener('click', () => this.ws.send({ cmd: 'restart' }));
+    this.panelContent.querySelector('#dt-input')?.addEventListener('change', (e) => {
+      this.store.setTimeStep(e.target.value);
+    });
+    this.panelContent.querySelector('#steps-input')?.addEventListener('input', (e) => {
+      this.store.setStepsPerFrame(e.target.value);
+    });
   }
 
   _renderFilesPanel() {
