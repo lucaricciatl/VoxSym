@@ -1,18 +1,28 @@
 import { LAYERS } from '../store/Store.js';
 
 export class InspectPanel {
-  constructor(container, store, ws) {
+  constructor(container, store, ws, overlayRoot) {
     this.container = container;
     this.store = store;
     this.ws = ws;
+    this.overlayRoot = overlayRoot;
     this.store.subscribe((state, patch) => {
       if (patch.crossSection !== undefined || patch.crossSectionPos !== undefined) {
+        this._updateCrossSectionUI(state);
+      }
+      if (patch.bbox !== undefined) {
         this._updateCrossSectionUI(state);
       }
       if (patch.inspectedVoxel !== undefined) {
         this._renderVoxelInspector(state.inspectedVoxel);
       }
     });
+  }
+
+  _axisRange(axis) {
+    const bbox = this.store.state.bbox;
+    const [lo, hi] = bbox[axis] || [-1, 1];
+    return { min: lo, max: hi, step: Math.max(0.01, (hi - lo) / 200) };
   }
 
   render() {
@@ -33,11 +43,10 @@ export class InspectPanel {
             <option value="z" ${this.store.state.crossSection.axis === 'z' ? 'selected' : ''}>Z</option>
           </select>
         </label>
-        <label>Position <span id="cs-pos-val">${this.store.state.crossSection.pos.toFixed(2)}</span>
-          <input id="cs-pos" type="range" min="-100" max="100" step="0.5" value="${this.store.state.crossSection.pos}">
+        <label id="cs-pos-label" style="display:${this.store.state.crossSection.axis === 'off' ? 'none' : 'block'}">Position <span id="cs-pos-val">${this.store.state.crossSection.pos.toExponential(2)}</span>
+          <input id="cs-pos" type="range" min="0" max="1" step="0.01" value="0.5">
         </label>
       </section>
-      <div id="voxel-inspector" class="overlay" style="display:none"></div>
     `;
 
     this.container.querySelector('#inspect-mode-toggle')?.addEventListener('click', () => {
@@ -48,15 +57,24 @@ export class InspectPanel {
     const axisSel = this.container.querySelector('#cs-axis');
     axisSel?.addEventListener('change', (e) => {
       const axis = e.target.value;
-      this.store.setCrossSection(axis, this.store.state.crossSection.pos);
-      this.ws.send({ cmd: 'set_cross_section', axis, pos: this.store.state.crossSection.pos });
+      let pos = this.store.state.crossSection.pos;
+      if (axis !== 'off') {
+        const { min, max } = this._axisRange(axis);
+        pos = (min + max) / 2;
+      }
+      this.store.setCrossSection(axis, pos);
+      this.ws.send({ cmd: 'set_cross_section', axis, pos });
     });
 
     const posInput = this.container.querySelector('#cs-pos');
     posInput?.addEventListener('input', (e) => {
-      const pos = parseFloat(e.target.value);
-      this.store.setCrossSection(this.store.state.crossSection.axis, pos);
-      this.ws.send({ cmd: 'set_cross_section', axis: this.store.state.crossSection.axis, pos });
+      const axis = this.store.state.crossSection.axis;
+      if (axis === 'off') return;
+      const t = parseFloat(e.target.value);
+      const { min, max } = this._axisRange(axis);
+      const pos = min + t * (max - min);
+      this.store.setCrossSection(axis, pos);
+      this.ws.send({ cmd: 'set_cross_section', axis, pos });
     });
   }
 
@@ -64,9 +82,22 @@ export class InspectPanel {
     const axisSel = this.container.querySelector('#cs-axis');
     const posInput = this.container.querySelector('#cs-pos');
     const posVal = this.container.querySelector('#cs-pos-val');
-    if (axisSel) axisSel.value = state.crossSection.axis;
-    if (posInput && document.activeElement !== posInput) posInput.value = state.crossSection.pos;
-    if (posVal) posVal.textContent = state.crossSection.pos.toFixed(2);
+    const posLabel = this.container.querySelector('#cs-pos-label');
+    const axis = state.crossSection.axis;
+    if (axisSel) axisSel.value = axis;
+    if (posLabel) posLabel.style.display = axis === 'off' ? 'none' : 'block';
+    if (axis !== 'off') {
+      const { min, max, step } = this._axisRange(axis);
+      if (posInput) {
+        posInput.min = min;
+        posInput.max = max;
+        posInput.step = step;
+        if (document.activeElement !== posInput) {
+          posInput.value = state.crossSection.pos;
+        }
+      }
+    }
+    if (posVal) posVal.textContent = state.crossSection.pos.toExponential(2);
   }
 
   showVoxelInspector(voxelId) {
@@ -74,7 +105,7 @@ export class InspectPanel {
   }
 
   _renderVoxelInspector(data) {
-    const overlay = this.container.querySelector('#voxel-inspector');
+    const overlay = this.overlayRoot;
     if (!overlay) return;
     if (!data) {
       overlay.style.display = 'none';

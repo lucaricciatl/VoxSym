@@ -46,13 +46,17 @@ export function updateVoxels(scene, payload) {
 
   mesh.material.opacity = Math.max(0, Math.min(1, globalOpacity));
 
+  const opacities = voxels.opacities || [];
   for (let i = 0; i < count; i++) {
     const x = positions[i * 3] ?? 0;
     const y = positions[i * 3 + 1] ?? 0;
     const z = positions[i * 3 + 2] ?? 0;
     const size = sizes[i] ?? 1.0;
+    const alpha = opacities[i] ?? 1.0;
     dummy.position.set(x, y, z);
-    dummy.scale.set(size, size, size);
+    // Per-voxel opacity via scale: hidden/sliced voxels collapse to zero.
+    const scale = alpha > 0.01 ? size : 0;
+    dummy.scale.set(scale, scale, scale);
     dummy.updateMatrix();
     mesh.setMatrixAt(i, dummy.matrix);
 

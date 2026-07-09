@@ -41,6 +41,7 @@ export class Store {
       frame: 0,
       voxelCount: 0,
       arrowCount: 0,
+      bbox: { x: [-1, 1], y: [-1, 1], z: [-1, 1] },
       showGrid: true,
       showAxes: true,
     };
@@ -148,6 +149,11 @@ export class Store {
   setFrameMeta({ time, frame, voxelCount, arrowCount }) {
     Object.assign(this.state, { time, frame, voxelCount, arrowCount });
     this._notify({ time, frame, voxelCount, arrowCount });
+  }
+
+  setBBox(bbox) {
+    this.state.bbox = bbox;
+    this._notify({ bbox });
   }
 
   getActiveLayers() {

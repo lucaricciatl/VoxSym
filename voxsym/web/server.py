@@ -303,6 +303,13 @@ class WebGLServer:
         vs = self.voxsym
         voxel = vs.voxels[voxel_id]
         material_name = getattr(voxel.material, "name", "unknown") if voxel.material else "unknown"
+
+        def _vec(name, default):
+            arr = getattr(voxel, name, None)
+            if arr is None:
+                return list(default)
+            return [float(v) for v in arr]
+
         return {
             "id": voxel_id,
             "index": voxel_id,
@@ -317,9 +324,9 @@ class WebGLServer:
             "effective_conductivity": float(getattr(voxel, "effective_conductivity", 0.0)),
             "potential": float(getattr(voxel, "phi", getattr(voxel, "potential", 0.0))),
             "charge": float(getattr(voxel, "charge", 0.0)),
-            "electric_field": [float(v) for v in (voxel.electric_field or [0.0, 0.0, 0.0])],
-            "magnetic_field": [float(v) for v in (voxel.magnetic_field or [0.0, 0.0, 0.0])],
-            "current_density": [float(v) for v in (getattr(voxel, "current_density", [0.0, 0.0, 0.0]))],
+            "electric_field": _vec("electric_field", [0.0, 0.0, 0.0]),
+            "magnetic_field": _vec("magnetic_field", [0.0, 0.0, 0.0]),
+            "current_density": _vec("current_density", [0.0, 0.0, 0.0]),
         }
 
     def start(self) -> None:

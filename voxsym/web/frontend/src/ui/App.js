@@ -52,6 +52,7 @@ export class App {
         <span id="sim-time">t = 0 s</span>
         <span id="status">disconnected</span>
       </div>
+      <div id="inspector-overlay" class="overlay" style="display:none"></div>
       <div id="viewport-controls">
         <button class="toggle ${this.store.state.showGrid ? 'active' : ''}" id="toggle-grid" title="Base grid">
           <span class="icon">#</span> Grid
@@ -69,7 +70,7 @@ export class App {
     this.panelContent = this.root.querySelector('#panel-content');
     this.layersPanel = new LayersPanel(this.panelContent, this.store);
     this.settingsPanel = new SettingsPanel(this.panelContent, this.store, this.ws);
-    this.inspectPanel = new InspectPanel(this.panelContent, this.store, this.ws);
+    this.inspectPanel = new InspectPanel(this.panelContent, this.store, this.ws, this.root.querySelector('#inspector-overlay'));
 
     this.store.subscribe((state, patch) => this.onStoreChange(state, patch));
 
@@ -115,6 +116,20 @@ export class App {
       voxelCount: payload.voxels?.count ?? 0,
       arrowCount,
     });
+
+    const positions = payload.voxels?.positions;
+    if (positions && positions.length >= 3) {
+      let minX = Infinity, maxX = -Infinity;
+      let minY = Infinity, maxY = -Infinity;
+      let minZ = Infinity, maxZ = -Infinity;
+      for (let i = 0; i < positions.length; i += 3) {
+        const x = positions[i], y = positions[i + 1], z = positions[i + 2];
+        if (x < minX) minX = x; if (x > maxX) maxX = x;
+        if (y < minY) minY = y; if (y > maxY) maxY = y;
+        if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+      }
+      this.store.setBBox({ x: [minX, maxX], y: [minY, maxY], z: [minZ, maxZ] });
+    }
     if (payload.active_layers && Array.isArray(payload.active_layers) && !this._initialSyncDone) {
       this._initialSyncDone = true;
       for (const layer of payload.active_layers) {

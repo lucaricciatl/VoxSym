@@ -65,7 +65,7 @@ class Renderer:
             scales[i] = [s, s, s]
             colors[i] = voxel.color
             opacities[i] = getattr(voxel, "opacity", 1.0)
-            if axis_index is not None and positions[i, axis_index] > cs_pos * scl:
+            if axis_index is not None and positions[i, axis_index] > cs_pos:
                 opacities[i] = 0.0
 
         return positions, scales, colors, opacities
