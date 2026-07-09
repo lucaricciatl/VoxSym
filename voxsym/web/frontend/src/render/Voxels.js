@@ -39,6 +39,9 @@ export function updateVoxels(scene, payload) {
     scene.scene.add(scene.arrowRoot);
   }
 
+  // Keep payload for hover/selection.
+  mesh.userData.voxels = voxels;
+
   const positions = voxels.positions || [];
   const sizes = voxels.sizes || [];
   const colors = voxels.colors || [];

@@ -112,14 +112,50 @@ export class InspectPanel {
       return;
     }
     overlay.style.display = 'block';
-    const rows = Object.entries(data)
-      .map(([k, v]) => `<tr><th>${k}</th><td>${Array.isArray(v) ? v.map(x => Number(x).toExponential(2)).join(', ') : (typeof v === 'number' ? Number(v).toExponential(2) : String(v))}</td></tr>`)
-      .join('');
+    const fmt = (v) => {
+      if (v === undefined || v === null) return '—';
+      if (Array.isArray(v)) return v.map(x => typeof x === 'number' ? Number(x).toExponential(2) : String(x)).join(', ');
+      if (typeof v === 'number') return Number(v).toExponential(3);
+      return String(v);
+    };
+    const row = (k, v) => `<tr><th>${k}</th><td>${fmt(v)}</td></tr>`;
+    const geometry = [
+      row('index', data.index),
+      row('x', data.x),
+      row('y', data.y),
+      row('z', data.z),
+      row('size', data.size),
+    ].join('');
+    const material = [
+      row('material', data.material),
+      row('temperature [K]', data.temperature),
+    ].join('');
+    const ions = [
+      row('H⁺ concentration', data.ion_concentration),
+      row('anion concentration', data.anion_concentration),
+      row('charge [C/m³]', data.charge),
+      row('potential [V]', data.potential),
+    ].join('');
+    const fields = [
+      row('E-field [V/m]', data.electric_field),
+      row('B-field [T]', data.magnetic_field),
+      row('current [A/m²]', data.current_density),
+    ].join('');
     overlay.innerHTML = `
       <div class="inspector-card">
-        <h4>Voxel ${data.id ?? ''}</h4>
-        <table>${rows}</table>
-        <button class="btn" id="close-inspector">Close</button>
+        <div class="inspector-header">
+          <h4>Voxel ${data.id ?? ''}</h4>
+          <span class="material-tag">${data.material ?? ''}</span>
+        </div>
+        <div class="inspector-body">
+          <section><h5>Geometry</h5><table>${geometry}</table></section>
+          <section><h5>Material</h5><table>${material}</table></section>
+          <section><h5>Ions & Potential</h5><table>${ions}</table></section>
+          <section><h5>Fields</h5><table>${fields}</table></section>
+        </div>
+        <div class="inspector-footer">
+          <button class="btn" id="close-inspector">Close</button>
+        </div>
       </div>
     `;
     overlay.querySelector('#close-inspector')?.addEventListener('click', () => {

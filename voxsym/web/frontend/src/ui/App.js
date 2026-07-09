@@ -81,6 +81,12 @@ export class App {
     this._openMenu('layers');
 
     this.store.subscribe((state, patch) => {
+      if (patch.hoveredVoxel !== undefined) {
+        this._updateSelectionPreview(state.hoveredVoxel);
+      }
+      if (patch.inspectedVoxel !== undefined) {
+        this._updateSelectionPreview(state.hoveredVoxel);
+      }
       if (patch.connected !== undefined) {
         const el = this.root.querySelector('#status');
         if (el) el.textContent = state.connected ? 'connected' : 'disconnected';
@@ -278,21 +284,77 @@ export class App {
   _bindViewportClick() {
     const viewport = this.root.querySelector('#viewport');
     if (!viewport) return;
+    this._raycaster = new THREE.Raycaster();
+    this._pointer = new THREE.Vector2();
+
+    const ray = (e) => {
+      const rect = viewport.getBoundingClientRect();
+      this._pointer.x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+      this._pointer.y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+      this._raycaster.setFromCamera(this._pointer, this.scene.camera);
+      return this._raycaster.intersectObject(this.scene.voxelMesh, false);
+    };
+
+    viewport.addEventListener('pointermove', (e) => {
+      if (!this.store.state.inspectMode || !this.scene?.voxelMesh) {
+        this.store.setHoveredVoxel(null);
+        return;
+      }
+      const hits = ray(e);
+      if (hits.length > 0) {
+        const id = hits[0].instanceId;
+        if (this.store.state.hoveredVoxel?.id !== id) {
+          this.store.setHoveredVoxel({ id });
+        }
+      } else {
+        this.store.setHoveredVoxel(null);
+      }
+    });
+
     viewport.addEventListener('pointerdown', (e) => {
       if (!this.store.state.inspectMode || !this.scene?.voxelMesh) return;
-      const rect = viewport.getBoundingClientRect();
-      const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
-      const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
-      const raycaster = new THREE.Raycaster();
-      raycaster.setFromCamera({ x, y }, this.scene.camera);
-      const hits = raycaster.intersectObject(this.scene.voxelMesh, false);
+      const hits = ray(e);
       if (hits.length > 0) {
         const id = hits[0].instanceId;
         this.store.setInspectedVoxel({ id });
         this.inspectPanel.showVoxelInspector(id);
         this.store.setInspectMode(false);
+        this.store.setHoveredVoxel(null);
       }
     });
+
+    viewport.addEventListener('pointerleave', () => this.store.setHoveredVoxel(null));
+  }
+
+  _getVoxelCenter(id) {
+    const mesh = this.scene?.voxelMesh;
+    const voxels = mesh?.userData?.voxels;
+    if (!voxels || id < 0 || id >= (voxels.count ?? 0)) return null;
+    const positions = voxels.positions || [];
+    const sizes = voxels.sizes || [];
+    return {
+      x: positions[id * 3] ?? 0,
+      y: positions[id * 3 + 1] ?? 0,
+      z: positions[id * 3 + 2] ?? 0,
+      size: sizes[id] ?? 1.0,
+    };
+  }
+
+  _updateSelectionPreview(hovered) {
+    const selected = this.store.state.inspectedVoxel;
+    const previewId = hovered ? hovered.id : null;
+    if (previewId !== null && previewId !== (selected?.id ?? -1)) {
+      const c = this._getVoxelCenter(previewId);
+      if (c) this.scene.setSelectionBox(new THREE.Vector3(c.x, c.y, c.z), c.size, 0xff3300, 'preview');
+    } else {
+      this.scene.removeSelectionBox('preview');
+    }
+    if (selected) {
+      const c = this._getVoxelCenter(selected.id);
+      if (c) this.scene.setSelectionBox(new THREE.Vector3(c.x, c.y, c.z), c.size, 0xff0000, 'selected');
+    } else {
+      this.scene.removeSelectionBox('selected');
+    }
   }
 
   _updateSceneHelpers(showGrid, showAxes) {

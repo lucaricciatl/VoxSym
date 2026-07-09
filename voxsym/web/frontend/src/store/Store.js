@@ -31,6 +31,7 @@ export class Store {
       crossSection: { axis: 'off', pos: 0 },
       inspectMode: false,
       inspectedVoxel: null,
+      hoveredVoxel: null,
       poissonEnabled: true,
       heatEnabled: false,
       electroneutralityEnabled: true,
@@ -115,6 +116,12 @@ export class Store {
   setInspectedVoxel(data) {
     this.state.inspectedVoxel = data;
     this._notify({ inspectedVoxel: data });
+  }
+
+  setHoveredVoxel(data) {
+    if (this.state.hoveredVoxel === data || (this.state.hoveredVoxel && data && this.state.hoveredVoxel.id === data.id)) return;
+    this.state.hoveredVoxel = data;
+    this._notify({ hoveredVoxel: data });
   }
 
   setPlaying(value) {

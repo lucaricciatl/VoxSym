@@ -152,4 +152,34 @@ export class Scene {
   showAxes(visible) {
     if (this._axesGroup) this._axesGroup.visible = visible;
   }
+
+  setSelectionBox(position, size, color, name = 'selection') {
+    if (size <= 0) {
+      this.removeSelectionBox(name);
+      return;
+    }
+    const boxName = `_selBox_${name}`;
+    let box = this[boxName];
+    if (!box) {
+      const geometry = new THREE.BoxGeometry(1, 1, 1);
+      const edges = new THREE.EdgesGeometry(geometry);
+      box = new THREE.LineSegments(edges, new THREE.LineBasicMaterial({ color }));
+      this.scene.add(box);
+      this[boxName] = box;
+    }
+    box.material.color.setHex(color);
+    box.position.copy(position);
+    box.scale.set(size, size, size);
+    box.visible = true;
+  }
+
+  removeSelectionBox(name = 'selection') {
+    const boxName = `_selBox_${name}`;
+    if (this[boxName]) {
+      this.scene.remove(this[boxName]);
+      this[boxName].geometry.dispose();
+      this[boxName].material.dispose();
+      this[boxName] = null;
+    }
+  }
 }

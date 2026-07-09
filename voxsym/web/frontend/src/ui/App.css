@@ -270,3 +270,49 @@ section p { margin: 4px 0; font-size: 13px; }
   font-weight: 500;
   width: 45%;
 }
+
+
+.inspector-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 12px;
+}
+
+.material-tag {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  padding: 4px 8px;
+  border-radius: 12px;
+  background: #e8f0fe;
+  color: #1967d2;
+}
+
+.inspector-body {
+  display: grid;
+  gap: 12px;
+  max-height: 70vh;
+  overflow-y: auto;
+}
+
+.inspector-body section h5 {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: #5f6368;
+  margin: 0 0 6px 0;
+}
+
+.inspector-body section table {
+  font-size: 13px;
+}
+
+.inspector-footer {
+  margin-top: 12px;
+  display: flex;
+  justify-content: flex-end;
+}
