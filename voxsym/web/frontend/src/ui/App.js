@@ -6,6 +6,7 @@ import { updateVoxels } from '../render/Voxels.js';
 import { updateArrows } from '../render/Arrows.js';
 import { Colorbar } from './Colorbar.js';
 import { Recorder } from './Recorder.js';
+import { Toast } from './Toast.js';
 import { LayersPanel } from './LayersPanel.js';
 import { SettingsPanel } from './SettingsPanel.js';
 import { InspectPanel } from './InspectPanel.js';
@@ -74,6 +75,7 @@ export class App {
 
     this.scene = new Scene(this.root.querySelector('#viewport'));
     this.colorbar = new Colorbar(this.root, this.store);
+    this.toast = new Toast(this.root);
 
     this.ws = new WebSocketClient(this.store, (payload) => this.onFrame(payload));
 
@@ -82,7 +84,7 @@ export class App {
     this.settingsPanel = new SettingsPanel(this.panelContent, this.store, this.ws);
     this.inspectPanel = new InspectPanel(this.panelContent, this.store, this.ws, this.root.querySelector('#inspector-overlay'));
 
-    this.store.subscribe((state, patch) => this.onStoreChange(state, patch));
+    this.store.subscribe((state, patch) => this._onStoreChange(state, patch));
 
     this._bindTopNav();
     this._bindViewportControls();
@@ -113,8 +115,17 @@ export class App {
         axesBtn?.classList.toggle('active', state.showAxes);
       }
       if (patch.recording !== undefined) {
-        if (state.recording) this.recorder?.start();
-        else this.recorder?.stop();
+        if (state.recording) {
+          const ok = this.recorder?.start();
+          if (!ok) this.toast?.warn('Recording not supported in this browser');
+        } else {
+          this.recorder?.stop();
+        }
+      }
+      if (patch.toast !== undefined) {
+        console.log('App toast patch', patch.toast);
+        const { kind, message } = patch.toast || {};
+        if (message) this.toast?.show(message, kind, kind === 'error' ? 5000 : 3000);
       }
       if ((patch.recording !== undefined || patch.playing !== undefined || patch.timeStep !== undefined || patch.stepsPerFrame !== undefined) && this._currentMenu === 'simulation') {
         this._renderSimulationPanel();
@@ -141,6 +152,11 @@ export class App {
       voxelCount: payload.voxels?.count ?? 0,
       arrowCount,
     });
+    // Keep playback indicator in sync with the server; avoid bouncing if the user just toggled it.
+    if (payload.playing !== undefined && payload.playing !== this.store.state.playing && this._lastPlayToggle === undefined) {
+      this.store.setPlaying(payload.playing);
+    }
+    this._lastPlayToggle = undefined;
     this.store.setScalarMeta({
       scalarRange: payload.scalar_range,
       colormap: payload.colormap,
@@ -266,6 +282,7 @@ export class App {
       </section>
     `;
     this.panelContent.querySelector('#sim-play-pause')?.addEventListener('click', () => {
+      this._lastPlayToggle = performance.now();
       this.store.setPlaying(!this.store.state.playing);
     });
     this.panelContent.querySelector('#sim-step')?.addEventListener('click', () => {
@@ -468,5 +485,36 @@ export class App {
     if (!this.scene) return;
     this.scene.showGrid(showGrid);
     this.scene.showAxes(showAxes);
+  }
+
+
+  _onStoreChange(state, patch) {
+    // Send control commands to the server whenever relevant UI state changes.
+    // UI re-renders live in the constructor subscription; this handler is strictly the server bridge.
+    if (patch.playing !== undefined) {
+      this.ws.send({ cmd: state.playing ? 'play' : 'pause' });
+    }
+    if (patch.activeScalar !== undefined) {
+      for (const s of LAYERS.SCALAR) {
+        this.ws.send({ cmd: 'set_layer', layer: s, active: s === state.activeScalar });
+      }
+    }
+    if (patch.activeVectors !== undefined) {
+      for (const v of LAYERS.VECTOR) {
+        this.ws.send({ cmd: 'set_layer', layer: v, active: state.activeVectors.has(v) });
+      }
+    }
+    if (patch.opacity !== undefined) {
+      this.ws.send({ cmd: 'set_opacity', value: state.opacity });
+    }
+    if (patch.arrowScale !== undefined) {
+      this.ws.send({ cmd: 'set_arrow_scale', value: state.arrowScale });
+    }
+    if (patch.stepsPerFrame !== undefined) {
+      this.ws.send({ cmd: 'set_time_scale', value: state.stepsPerFrame });
+    }
+    if (patch.timeStep !== undefined) {
+      this.ws.send({ cmd: 'set_time_step', value: state.timeStep });
+    }
   }
 }

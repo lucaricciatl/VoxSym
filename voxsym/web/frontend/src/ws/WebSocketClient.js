@@ -32,6 +32,9 @@ export class WebSocketClient {
         this.store.setInspectedVoxel(data.data);
       } else if (data.type === 'config') {
         this.store.syncConfig(data);
+      } else if (data.type === 'toast') {
+        console.log('WS toast', data);
+        this.store.addToast(data);
       } else if (this.onFrame) {
         this.onFrame(data);
       }

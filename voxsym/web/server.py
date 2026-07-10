@@ -150,6 +150,13 @@ class WebGLServer:
                 with self._lock:
                     self._clients.discard(c)
 
+    def _reply(self, client, kind: str, message: str) -> None:
+        """Send a short toast/ack message to a single client."""
+        try:
+            client.write_message(json.dumps({"type": "toast", "kind": kind, "message": message}))
+        except Exception:
+            pass
+
     def remove_client(self, client: _WebSocketHandler) -> None:
         with self._lock:
             self._clients.discard(client)
@@ -203,10 +210,13 @@ class WebGLServer:
         try:
             if cmd.cmd == "play":
                 vs.play()
+                self._reply(client, "success", "Playing")
             elif cmd.cmd == "pause":
                 vs.pause()
+                self._reply(client, "success", "Paused")
             elif cmd.cmd == "stop":
                 vs.stop()
+                self._reply(client, "success", "Stopped")
             elif cmd.cmd == "reset":
                 vs.reset_to_initial()
                 vs.reset_simulation()
@@ -232,7 +242,7 @@ class WebGLServer:
                     # otherwise arrows won't appear in static or paused simulations.
                     if cmd.active and cmd.layer in ("electric_field", "magnetic_field", "current"):
                         try:
-                            vs.apply_em_fields(t=vs._elapsed_time)
+                            vs.apply_em_fields(t=vs.elapsed_time)
                         except Exception:
                             pass
                     # Re-render immediately so layer changes reflect without waiting for a sim step.
@@ -275,34 +285,44 @@ class WebGLServer:
             elif cmd.cmd == "set_time_scale":
                 if cmd.value is not None and cmd.value > 0:
                     vs.set_steps_per_frame(int(cmd.value))
+                    self._reply(client, "success", f"Steps/frame set to {int(cmd.value)}")
             elif cmd.cmd == "set_time_step":
                 if cmd.value is not None and cmd.value > 0:
                     vs.set_time_step(float(cmd.value))
+                    self._reply(client, "success", f"Time step set to {float(cmd.value):.2e} s")
             elif cmd.cmd == "single_step":
                 vs.single_step()
+                self._reply(client, "success", "Advanced one step")
             elif cmd.cmd == "reset_time":
                 vs.reset_time()
+                self._reply(client, "success", "Simulation time reset")
             elif cmd.cmd == "get_config":
                 client.write_message(json.dumps({"type": "config", **vs.get_config()}))
             elif cmd.cmd == "set_poisson":
                 vs.set_enable_poisson(bool(cmd.active))
+                self._reply(client, "success", f"Poisson {'on' if cmd.active else 'off'}")
             elif cmd.cmd == "set_heat":
                 if cmd.active:
                     vs.enable_heat()
                 else:
                     vs.disable_heat()
+                self._reply(client, "success", f"Heat {'on' if cmd.active else 'off'}")
             elif cmd.cmd == "set_electroneutrality":
                 vs.set_electroneutrality(bool(cmd.active))
+                self._reply(client, "success", f"Electroneutrality {'on' if cmd.active else 'off'}")
             elif cmd.cmd == "set_butler_volmer":
                 vs.set_enable_butler_volmer(bool(cmd.active))
+                self._reply(client, "success", f"Butler–Volmer {'on' if cmd.active else 'off'}")
             elif cmd.cmd == "set_double_layer":
                 vs.set_enable_double_layer(bool(cmd.active))
+                self._reply(client, "success", f"Double-layer {'on' if cmd.active else 'off'}")
             elif cmd.cmd == "inspect_voxel":
                 try:
                     data = self._inspect_voxel(int(cmd.voxel_id))
                     client.write_message(json.dumps({"type": "voxel", "data": data}))
                 except Exception as exc:
                     logging.warning("inspect_voxel failed: %s", exc)
+                    self._reply(client, "error", f"Inspect voxel failed: {exc}")
             elif cmd.cmd == "set_camera":
                 # Camera is handled client-side; this hook allows future server-side overrides.
                 pass

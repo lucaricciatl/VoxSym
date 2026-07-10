@@ -51,6 +51,7 @@ export class Store {
       scalarValues: [],
       orthographic: false,
       probe: null,
+      toast: null,
     };
     this.listeners = new Set();
   }
@@ -136,6 +137,7 @@ export class Store {
     const map = {
       time_step: 'timeStep',
       steps_per_frame: 'stepsPerFrame',
+      playing: 'playing',
       poisson_enabled: 'poissonEnabled',
       heat_enabled: 'heatEnabled',
       electroneutrality_enabled: 'electroneutralityEnabled',
@@ -197,6 +199,14 @@ export class Store {
     if (same) return;
     this.state.probe = data;
     this._notify({ probe: data });
+  }
+
+  addToast(data) {
+    if (!data || !data.message) return;
+    const toast = { kind: data.kind || 'info', message: data.message };
+    console.log('Store.addToast', toast);
+    this.state.toast = toast;
+    this._notify({ toast });
   }
 
   setFrameMeta({ time, frame, voxelCount, arrowCount }) {

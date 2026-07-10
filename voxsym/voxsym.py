@@ -179,7 +179,8 @@ class VoxSym:
 
         # Simulation control flags (driven by GUI play/pause/stop buttons)
         self._simulation_running = True
-        self._simulation_paused = True
+        self._simulation_paused = threading.Event()
+        self._simulation_paused.set()  # start paused
 
         # Snapshot of initial voxel state for reset
         self._initial_state: Optional[dict] = None
@@ -248,23 +249,19 @@ class VoxSym:
     @property
     def simulation_paused(self) -> bool:
         """True when the simulation loop should render but not step."""
-        return self._simulation_paused
+        return self._simulation_paused.is_set()
 
     def play(self):
         """Resume stepping in the simulation loop."""
-        self._simulation_paused = False
+        self._simulation_paused.clear()
         if self._playback_mode:
             self._playback_playing = True
 
     def pause(self):
         """Pause stepping in the simulation loop (rendering continues)."""
-        self._simulation_paused = True
+        self._simulation_paused.set()
         if self._playback_mode:
             self._playback_playing = False
-
-    def is_playing(self) -> bool:
-        """Return True if the simulation is currently stepping."""
-        return not self._simulation_paused
 
     def stop(self):
         """Signal the simulation loop to exit."""
@@ -272,12 +269,12 @@ class VoxSym:
 
     def is_playing(self) -> bool:
         """Return whether the simulation is currently playing (not paused)."""
-        return self._simulation_running and not self._simulation_paused
+        return self._simulation_running and not self._simulation_paused.is_set()
 
     def reset_simulation(self):
         """Reset simulation control flags to their initial state."""
         self._simulation_running = True
-        self._simulation_paused = True
+        self._simulation_paused.set()
 
     def snapshot_initial_state(self):
         """Capture the current voxel properties as the initial state for reset."""
@@ -356,7 +353,7 @@ class VoxSym:
             sleep: Real-time delay between frames [s].
         """
         self._simulation_running = True
-        self._simulation_paused = True
+        self._simulation_paused.set()
         self._playback_last_time = time.perf_counter()
 
         # Snapshot current state so reset_to_initial() can restore it.
@@ -376,7 +373,7 @@ class VoxSym:
 
         try:
             while self._simulation_running:
-                if not self._simulation_paused:
+                if not self._simulation_paused.is_set():
                     if self._playback_mode:
                         self._advance_playback()
                     else:
@@ -388,7 +385,7 @@ class VoxSym:
                                     print(f"[on_update] {exc}")
                         else:
                             # Default loop: apply EM fields, sub-step, update GUI
-                            step_dt = dt if dt is not None else self.time_step
+                            step_dt = dt if dt is not None else self.dt
                             for _ in range(self._steps_per_frame):
                                 self.apply_em_fields(t=self._elapsed_time)
                                 self.step_and_update(step_dt)
@@ -1677,7 +1674,7 @@ class VoxSym:
 
     def single_step(self):
         """Advance physics by one time step."""
-        self.step_and_update(self.time + self.dt)
+        self.step_and_update(self._elapsed_time + self.dt)
 
     def reset_time(self):
         """Reset simulation time and fields."""
@@ -1701,6 +1698,7 @@ class VoxSym:
             "time_step": float(getattr(self, "dt", 1e-3)),
             "steps_per_frame": int(getattr(self, "_steps_per_frame", 1)),
             "time": float(getattr(self, "time", 0.0)),
+            "playing": bool(self.is_playing()),
             "poisson_enabled": bool(getattr(self, "_enable_poisson", False)),
             "heat_enabled": bool(getattr(self, "_heat_solver_enabled", True)),
             "electroneutrality_enabled": bool(getattr(self, "_enforce_electroneutrality", False)),
