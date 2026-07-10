@@ -59,8 +59,9 @@ class Visualizer:
         self.cross_section_axis: Optional[str] = None  # None, 'x', 'y', 'z'
         self.cross_section_pos: float = 0.0
 
-        # Per-layer scalar normalization range for colorbar UI.
+        # Per-layer scalar normalization range and raw values for colorbar/probe UI.
         self._scalar_range: Dict[str, Tuple[float, float]] = {}
+        self._scalar_values: Dict[str, List[float]] = {}
         self._active_scalar: str = Layer.MATERIAL
 
     # ------------------------------------------------------------------
@@ -250,15 +251,18 @@ class Visualizer:
                 self._active_scalar = layer
                 if layer == Layer.ION_CONCENTRATION:
                     self._snapshot_base_colors()
-                    self._record_range(layer, [v.ion_concentration for v in self.voxsym.get_voxels()])
+                    vals = [v.ion_concentration for v in self.voxsym.get_voxels()]
+                    self._record_scalar(layer, vals)
                     self._color_by_ion_concentration()
                 elif layer == Layer.EFFECTIVE_CONDUCTIVITY:
                     self._snapshot_base_colors()
-                    self._record_range(layer, [v.effective_conductivity for v in self.voxsym.get_voxels()])
+                    vals = [v.effective_conductivity for v in self.voxsym.get_voxels()]
+                    self._record_scalar(layer, vals)
                     self._color_by_effective_conductivity()
                 elif layer == Layer.TEMPERATURE:
                     self._snapshot_base_colors()
-                    self._record_range(layer, [v.temperature for v in self.voxsym.get_voxels()])
+                    vals = [v.temperature for v in self.voxsym.get_voxels()]
+                    self._record_scalar(layer, vals)
                     self._color_by_temperature()
                 elif layer == Layer.MATERIAL:
                     self._snapshot_base_colors()
@@ -268,12 +272,14 @@ class Visualizer:
                     self._restore_base_colors()
                 break
 
-    def _record_range(self, layer, values):
+    def _record_scalar(self, layer, values):
         if values:
+            self._scalar_values[layer] = [float(v) for v in values]
             v_min = float(min(values))
             v_max = float(max(values))
             self._scalar_range[layer] = [v_min, v_max]
         else:
+            self._scalar_values[layer] = []
             self._scalar_range[layer] = [0.0, 1.0]
 
     @staticmethod

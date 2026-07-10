@@ -62,6 +62,16 @@ export class Scene {
     this.voxelMesh = null;
     this.arrowRoot = null;
 
+    this._isOrtho = false;
+    this._defaultCam = {
+      fov: this.camera.fov,
+      near: this.camera.near,
+      far: this.camera.far,
+      position: this.camera.position.clone(),
+      target: this.controls.target.clone(),
+      up: this.camera.up.clone(),
+    };
+
     // Grid on the XY plane so Z is the vertical (up) axis.
     this._gridHelper = new THREE.GridHelper(20, 20, 0x888888, 0xcccccc);
     this._gridHelper.rotation.x = -Math.PI / 2;
@@ -122,7 +132,16 @@ export class Scene {
   onResize() {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
-    this.camera.aspect = w / h;
+    const aspect = w / h;
+    if (this.camera.isOrthographicCamera) {
+      const size = 16;
+      this.camera.left = -size;
+      this.camera.right = size;
+      this.camera.top = size / aspect;
+      this.camera.bottom = -size / aspect;
+    } else {
+      this.camera.aspect = aspect;
+    }
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h);
   }
@@ -181,5 +200,76 @@ export class Scene {
       this[boxName].material.dispose();
       this[boxName] = null;
     }
+  }
+
+  resetCamera() {
+    const cam = this._isOrtho ? this._makeOrthographicCamera() : this.camera;
+    cam.position.copy(this._defaultCam.position);
+    cam.up.copy(this._defaultCam.up);
+    this.controls.target.copy(this._defaultCam.target);
+    if (this._isOrtho) {
+      const size = 16;
+      cam.left = -size;
+      cam.right = size;
+      cam.top = size / cam.aspect;
+      cam.bottom = -size / cam.aspect;
+      cam.updateProjectionMatrix();
+    }
+    cam.updateProjectionMatrix();
+    this.controls.update();
+  }
+
+  _makeOrthographicCamera() {
+    const w = this.container.clientWidth;
+    const h = this.container.clientHeight;
+    const aspect = w / h;
+    const size = 16;
+    const cam = new THREE.OrthographicCamera(
+      -size, size, size / aspect, -size / aspect, this._defaultCam.near, this._defaultCam.far,
+    );
+    cam.position.copy(this.camera.position);
+    cam.up.copy(this.camera.up);
+    cam.lookAt(this.controls.target);
+    return cam;
+  }
+
+  toggleOrthographic() {
+    this._isOrtho = !this._isOrtho;
+    const oldCam = this.camera;
+    if (this._isOrtho) {
+      this.camera = this._makeOrthographicCamera();
+    } else {
+      this.camera = new THREE.PerspectiveCamera(
+        this._defaultCam.fov,
+        this.container.clientWidth / this.container.clientHeight,
+        this._defaultCam.near,
+        this._defaultCam.far,
+      );
+      this.camera.position.copy(oldCam.position);
+      this.camera.up.copy(oldCam.up);
+      this.camera.lookAt(this.controls.target);
+    }
+    this.controls.object = this.camera;
+    this.onResize();
+    this.controls.update();
+    return this._isOrtho;
+  }
+
+  getVoxelValueAt(instanceId) {
+    const mesh = this.voxelMesh;
+    const voxels = mesh?.userData?.voxels;
+    if (!voxels || instanceId < 0 || instanceId >= (voxels.count ?? 0)) return null;
+    const i = instanceId;
+    const positions = voxels.positions || [];
+    const sizes = voxels.sizes || [];
+    const colors = voxels.colors || [];
+    return {
+      id: i,
+      x: positions[i * 3] ?? 0,
+      y: positions[i * 3 + 1] ?? 0,
+      z: positions[i * 3 + 2] ?? 0,
+      size: sizes[i] ?? 1.0,
+      color: [colors[i * 3] ?? 0, colors[i * 3 + 1] ?? 0, colors[i * 3 + 2] ?? 0],
+    };
   }
 }

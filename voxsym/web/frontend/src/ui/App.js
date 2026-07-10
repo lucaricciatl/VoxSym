@@ -62,7 +62,14 @@ export class App {
         <button class="toggle ${this.store.state.showAxes ? 'active' : ''}" id="toggle-axes" title="Axis">
           <span class="icon">+</span> Axis
         </button>
+        <button class="toggle" id="toggle-ortho" title="Orthographic camera">
+          <span class="icon">O</span> Ortho
+        </button>
+        <button class="btn" id="camera-reset" title="Reset camera">
+          Reset
+        </button>
       </div>
+      <div id="probe-tooltip" class="probe-tooltip" style="display:none"></div>
     `;
 
     this.scene = new Scene(this.root.querySelector('#viewport'));
@@ -137,6 +144,7 @@ export class App {
     this.store.setScalarMeta({
       scalarRange: payload.scalar_range,
       colormap: payload.colormap,
+      scalarValues: payload.scalar_values,
     });
 
     const positions = payload.voxels?.positions;
@@ -320,8 +328,16 @@ export class App {
   _bindViewportControls() {
     const gridBtn = this.root.querySelector('#toggle-grid');
     const axesBtn = this.root.querySelector('#toggle-axes');
+    const orthoBtn = this.root.querySelector('#toggle-ortho');
+    const resetBtn = this.root.querySelector('#camera-reset');
     gridBtn?.addEventListener('click', () => this.store.setShowGrid(!this.store.state.showGrid));
     axesBtn?.addEventListener('click', () => this.store.setShowAxes(!this.store.state.showAxes));
+    orthoBtn?.addEventListener('click', () => {
+      const ortho = this.scene.toggleOrthographic();
+      this.store.setOrthographic(ortho);
+      orthoBtn.classList.toggle('active', ortho);
+    });
+    resetBtn?.addEventListener('click', () => this.scene.resetCamera());
   }
 
   _bindViewportClick() {
@@ -339,18 +355,23 @@ export class App {
     };
 
     viewport.addEventListener('pointermove', (e) => {
-      if (!this.store.state.inspectMode || !this.scene?.voxelMesh) {
+      if (!this.scene?.voxelMesh) {
         this.store.setHoveredVoxel(null);
+        this._updateProbe(null);
         return;
       }
       const hits = ray(e);
       if (hits.length > 0) {
         const id = hits[0].instanceId;
-        if (this.store.state.hoveredVoxel?.id !== id) {
-          this.store.setHoveredVoxel({ id });
+        if (this.store.state.inspectMode) {
+          if (this.store.state.hoveredVoxel?.id !== id) {
+            this.store.setHoveredVoxel({ id });
+          }
         }
+        this._updateProbe({ id, clientX: e.clientX, clientY: e.clientY });
       } else {
         this.store.setHoveredVoxel(null);
+        this._updateProbe(null);
       }
     });
 
@@ -381,6 +402,49 @@ export class App {
       z: positions[id * 3 + 2] ?? 0,
       size: sizes[id] ?? 1.0,
     };
+  }
+
+  _updateProbe(pointer) {
+    const tooltip = this.root.querySelector('#probe-tooltip');
+    if (!tooltip) return;
+    if (!pointer) {
+      tooltip.style.display = 'none';
+      return;
+    }
+    const v = this.scene.getVoxelValueAt(pointer.id);
+    if (!v) {
+      tooltip.style.display = 'none';
+      return;
+    }
+    const mesh = this.scene.voxelMesh;
+    const layer = mesh?.userData?.scalar_layer || 'material';
+    const values = mesh?.userData?.scalar_values || [];
+    let valueText = '';
+    if (layer === 'material') {
+      valueText = 'material';
+    } else if (values.length > pointer.id) {
+      const raw = values[pointer.id];
+      const t = Math.abs(raw);
+      const fmt = t === 0 ? '0' : (t < 1e-3 || t >= 1e3) ? raw.toExponential(2) : raw.toFixed(3).replace(/\.?0+$/, '');
+      valueText = `${fmt} ${this._probeUnit(layer)}`;
+    }
+    tooltip.innerHTML = `
+      <div class="probe-title">Voxel ${v.id}</div>
+      <div class="probe-row">${valueText}</div>
+      <div class="probe-coords">(${v.x.toExponential(1)}, ${v.y.toExponential(1)}, ${v.z.toExponential(1)})</div>
+    `;
+    tooltip.style.display = 'block';
+    tooltip.style.left = `${pointer.clientX + 12}px`;
+    tooltip.style.top = `${pointer.clientY + 12}px`;
+  }
+
+  _probeUnit(layer) {
+    switch (layer) {
+      case 'temperature': return 'K';
+      case 'ion_concentration': return 'mol/m³';
+      case 'effective_conductivity': return 'S/m';
+      default: return '';
+    }
   }
 
   _updateSelectionPreview(hovered) {

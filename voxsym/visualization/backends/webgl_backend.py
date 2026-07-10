@@ -76,6 +76,7 @@ class WebGLBackend(RenderBackend):
                 scalar_layer=str(self._scalar_layer()),
                 scalar_range=list(self._scalar_range()),
                 colormap=str(self._colormap()),
+                scalar_values=self._scalar_values(),
             )
 
         self._latest_payload = payload
@@ -213,3 +214,13 @@ class WebGLBackend(RenderBackend):
         if r is None:
             return (0.0, 1.0)
         return (float(r[0]), float(r[1]))
+
+    def _scalar_values(self) -> list:
+        visualizer = getattr(self.voxsym, "_visualizer", None)
+        if visualizer is None:
+            return []
+        layer = self._scalar_layer()
+        vals = getattr(visualizer, "_scalar_values", {}).get(layer)
+        if vals is None:
+            return []
+        return [float(v) for v in vals]

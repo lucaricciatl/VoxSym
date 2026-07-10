@@ -39,8 +39,10 @@ export function updateVoxels(scene, payload) {
     scene.scene.add(scene.arrowRoot);
   }
 
-  // Keep payload for hover/selection.
+  // Keep payload for hover/selection and probing.
   mesh.userData.voxels = voxels;
+  mesh.userData.scalar_values = payload.scalar_values || [];
+  mesh.userData.scalar_layer = payload.scalar_layer || 'material';
 
   const positions = voxels.positions || [];
   const sizes = voxels.sizes || [];

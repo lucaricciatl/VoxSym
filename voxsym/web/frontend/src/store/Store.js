@@ -48,6 +48,9 @@ export class Store {
       showAxes: true,
       scalarRange: [0, 1],
       colormap: 'viridis',
+      scalarValues: [],
+      orthographic: false,
+      probe: null,
     };
     this.listeners = new Set();
   }
@@ -183,12 +186,25 @@ export class Store {
     this._notify({ showAxes: value });
   }
 
+  setOrthographic(value) {
+    if (this.state.orthographic === value) return;
+    this.state.orthographic = value;
+    this._notify({ orthographic: value });
+  }
+
+  setProbe(data) {
+    const same = this.state.probe && data && this.state.probe.id === data.id;
+    if (same) return;
+    this.state.probe = data;
+    this._notify({ probe: data });
+  }
+
   setFrameMeta({ time, frame, voxelCount, arrowCount }) {
     Object.assign(this.state, { time, frame, voxelCount, arrowCount });
     this._notify({ time, frame, voxelCount, arrowCount });
   }
 
-  setScalarMeta({ scalarRange, colormap }) {
+  setScalarMeta({ scalarRange, colormap, scalarValues }) {
     let changed = false;
     if (scalarRange !== undefined) {
       const lo = parseFloat(scalarRange[0]);
@@ -202,7 +218,11 @@ export class Store {
       this.state.colormap = colormap;
       changed = true;
     }
-    if (changed) this._notify({ scalarRange: this.state.scalarRange, colormap: this.state.colormap });
+    if (scalarValues !== undefined) {
+      this.state.scalarValues = scalarValues;
+      changed = true;
+    }
+    if (changed) this._notify({ scalarRange: this.state.scalarRange, colormap: this.state.colormap, scalarValues: this.state.scalarValues });
   }
 
   setBBox(bbox) {

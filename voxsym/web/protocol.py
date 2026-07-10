@@ -22,6 +22,7 @@ class FramePayload:
     scalar_layer: str = "material"
     scalar_range: List[float] = field(default_factory=lambda: [0.0, 1.0])
     colormap: str = "viridis"
+    scalar_values: List[float] = field(default_factory=list)
 
     @classmethod
     def empty(cls, time: float = 0.0) -> "FramePayload":
