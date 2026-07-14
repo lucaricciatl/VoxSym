@@ -48,12 +48,13 @@ export function updateArrows(scene, arrows) {
 
   const halfVoxel = 0.5 * baseSize;
   const geoHeight = 1.25;
-  // Global length reduction so the default arrow size is less overwhelming.
-  const lengthFactor = 0.7;
   // Thickness is clamped between a minimum for weak fields and a maximum
   // for strong fields, using the per-arrow relative field strength.
-  const minRadius = Math.max(0.03, baseSize * 0.06 * arrowScale);
-  const maxRadius = Math.max(0.06, baseSize * 0.18 * arrowScale);
+  const minRadius = Math.max(0.02, baseSize * 0.04 * arrowScale);
+  const maxRadius = Math.max(0.08, baseSize * 0.22 * arrowScale);
+  // Length is already encoded proportionally by the backend (and shortened
+  // there by 30%); avoid a second reduction on the client.
+  const lengthFactor = 1.0;
 
   for (let i = 0; i < count; i++) {
     const i6 = i * 6;
@@ -79,9 +80,9 @@ export function updateArrows(scene, arrows) {
       // Strength is the relative field intensity in this layer [0, 1].
       const strength = strengths ? Math.max(0, Math.min(1, strengths[i] ?? 1)) : 1.0;
       const minLen = 0.12 * baseSize * arrowScale;
-      // Decrease arrow length by 30% while preserving linear proportionality.
-      const proportionalLen = len * arrowScale * lengthFactor;
-      const renderedLen = Math.max(minLen, proportionalLen);
+      // The backend already encodes arrow length proportionally to intensity
+      // (shortened by 30%). Keep the user arrow-scale slider active.
+      const renderedLen = Math.max(minLen, len * arrowScale);
 
       // Thickness is clamped between minRadius (weak field) and maxRadius
       // (strong field) based on the same relative field strength.

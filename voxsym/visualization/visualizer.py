@@ -435,13 +435,15 @@ class Visualizer:
             # Relative strength in [0, 1].
             strength = mag / max_mag
             strengths[i] = strength
-            # Arrow length in rendered units proportional to intensity:
-            # zero field still shows a small orientation marker, max field
-            # is a long arrow scaled by the user-controlled factor.
+            # Arrow length in rendered units proportional to intensity.
+            # A flat 0.7 factor shortens all arrows by ~30%.  The mapping
+            # (0.15 + 0.85 * strength) keeps a tiny orientation marker at
+            # zero field and reaches full scale at max field.
             length = (
                 base_size
                 * self.field_arrow_scale
-                * (0.2 + 1.4 * strength)
+                * 0.7
+                * (0.15 + 0.85 * strength)
             )
 
             center = np.array(
