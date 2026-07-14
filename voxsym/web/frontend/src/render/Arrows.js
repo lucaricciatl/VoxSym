@@ -48,6 +48,12 @@ export function updateArrows(scene, arrows) {
 
   const halfVoxel = 0.5 * baseSize;
   const geoHeight = 1.25;
+  // Global length reduction so the default arrow size is less overwhelming.
+  const lengthFactor = 0.7;
+  // Thickness is clamped between a minimum for weak fields and a maximum
+  // for strong fields, using the per-arrow relative field strength.
+  const minRadius = Math.max(0.03, baseSize * 0.06 * arrowScale);
+  const maxRadius = Math.max(0.06, baseSize * 0.18 * arrowScale);
 
   for (let i = 0; i < count; i++) {
     const i6 = i * 6;
@@ -70,18 +76,17 @@ export function updateArrows(scene, arrows) {
       dummy.rotation.set(0, 0, 0);
     } else {
       _dir.normalize();
-      // The backend already encodes arrow length proportionally to field
-      // intensity (tip = origin + direction * base_size * arrow_scale * strength).
-      // Preserve that proportionality; only add a tiny minimum so zero-field
-      // arrows still show orientation.
+      // Strength is the relative field intensity in this layer [0, 1].
       const strength = strengths ? Math.max(0, Math.min(1, strengths[i] ?? 1)) : 1.0;
       const minLen = 0.12 * baseSize * arrowScale;
-      const proportionalLen = len * arrowScale;
+      // Decrease arrow length by 30% while preserving linear proportionality.
+      const proportionalLen = len * arrowScale * lengthFactor;
       const renderedLen = Math.max(minLen, proportionalLen);
 
-      // Constant thickness regardless of field strength; length is the only
-      // intensity cue.
-      const radius = Math.max(0.04, baseSize * 0.12 * arrowScale);
+      // Thickness is clamped between minRadius (weak field) and maxRadius
+      // (strong field) based on the same relative field strength.
+      const radius = minRadius + (maxRadius - minRadius) * strength;
+
       const tail = _dir.clone().multiplyScalar(-halfVoxel).add(_origin);
       const tip = _dir.clone().multiplyScalar(halfVoxel + renderedLen).add(_origin);
       const actualLen = tip.distanceTo(tail);
