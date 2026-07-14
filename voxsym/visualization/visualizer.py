@@ -17,6 +17,7 @@ class Layer:
     MATERIAL = "material"
     ION_CONCENTRATION = "ion_concentration"
     EFFECTIVE_CONDUCTIVITY = "effective_conductivity"
+    CHARGE = "charge"
 
 
 class Visualizer:
@@ -114,14 +115,14 @@ class Visualizer:
         """Toggle a visualization layer on/off.
 
         Scalar color layers (temperature, material, ion concentration,
-        base colour, effective conductivity) are mutually exclusive: activating
-        one deactivates the others.  Vector overlay layers (E/B-field, current)
-        can coexist.
+        charge, effective conductivity, base colour) are mutually exclusive:
+        activating one deactivates the others.
         """
         scalar_layers = {
             Layer.TEMPERATURE,
             Layer.MATERIAL,
             Layer.ION_CONCENTRATION,
+            Layer.CHARGE,
             Layer.EFFECTIVE_CONDUCTIVITY,
         }
         if active:
@@ -241,6 +242,7 @@ class Visualizer:
         """If a scalar layer is active, compute colors and write them to voxels."""
         scalar_priority = [
             Layer.ION_CONCENTRATION,
+            Layer.CHARGE,
             Layer.EFFECTIVE_CONDUCTIVITY,
             Layer.TEMPERATURE,
             Layer.MATERIAL,
@@ -254,6 +256,11 @@ class Visualizer:
                     vals = [v.ion_concentration for v in self.voxsym.get_voxels()]
                     self._record_scalar(layer, vals)
                     self._color_by_ion_concentration()
+                elif layer == Layer.CHARGE:
+                    self._snapshot_base_colors()
+                    vals = [v.charge for v in self.voxsym.get_voxels()]
+                    self._record_scalar(layer, vals)
+                    self._color_by_charge()
                 elif layer == Layer.EFFECTIVE_CONDUCTIVITY:
                     self._snapshot_base_colors()
                     vals = [v.effective_conductivity for v in self.voxsym.get_voxels()]
@@ -334,6 +341,16 @@ class Visualizer:
         for voxel, color in zip(voxels, colors):
             voxel.color = color
 
+    def _color_by_charge(self):
+        """Map free charge density to an inferno-like scale."""
+        voxels = self.voxsym.get_voxels()
+        if not voxels:
+            return
+        vals = [v.charge for v in voxels]
+        colors = self._normalize(vals, self._colormap_plasma)
+        for voxel, color in zip(voxels, colors):
+            voxel.color = color
+
     # ------------------------------------------------------------------
     # Vector overlays – drawn as arrows via the renderer backend
     # ------------------------------------------------------------------
@@ -406,24 +423,25 @@ class Visualizer:
         points = np.zeros((n, 2, 3), dtype=np.float32)
         colors = np.zeros((n, 3), dtype=np.uint8)
         directions = np.zeros((n, 3), dtype=np.float32)
+        strengths = np.zeros(n, dtype=np.float32)
 
         # Geometry parameters in *rendered* units (after render_scale).
         base_size = float(selected[0].size) * scl
-        shaft_radius = 0.04 * base_size
-        head_radius = 0.06 * base_size
-        head_length = 0.10 * base_size * self.field_arrow_scale
 
         for i, (voxel, vec, mag) in enumerate(vecs):
+            vec = np.asarray(vec, dtype=float)
             direction = vec / mag if mag > 1e-12 else np.zeros(3)
             directions[i] = direction.astype(np.float32)
             # Relative strength in [0, 1].
             strength = mag / max_mag
-            # Arrow length in rendered units: at least a fraction of the voxel
-            # size (so orientation is always readable) and up to ~1 voxel size.
+            strengths[i] = strength
+            # Arrow length in rendered units proportional to intensity:
+            # zero field still shows a small orientation marker, max field
+            # is a long arrow scaled by the user-controlled factor.
             length = (
                 base_size
                 * self.field_arrow_scale
-                * (0.25 + 0.55 * strength)
+                * (0.2 + 1.4 * strength)
             )
 
             center = np.array(
@@ -439,13 +457,15 @@ class Visualizer:
                 # Brighten with strength so the field type is always
                 # identifiable but stronger fields pop more.
                 mix = 0.5 + 0.5 * strength
-                colors[i] = tuple(min(255, int(c * mix)) for c in base_color)
+                if not np.isfinite(mix):
+                    mix = 1.0
+                colors[i] = tuple(min(255, int(min(255, c) * np.clip(mix, 0.0, 1.0))) for c in base_color)
 
         backend = self.renderer.backend
         if backend is not None:
             backend.add_arrows(
-                points, colors, shaft_radius, head_radius, head_length,
-                direction=directions,
+                points, colors, 0, 0, 0,
+                direction=directions, strengths=strengths,
             )
             self._handles[layer_name] = backend.handle
 

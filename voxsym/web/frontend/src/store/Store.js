@@ -1,5 +1,5 @@
 export const LAYERS = {
-  SCALAR: ['temperature', 'ion_concentration', 'effective_conductivity', 'material'],
+  SCALAR: ['temperature', 'ion_concentration', 'effective_conductivity', 'charge', 'material'],
   VECTOR: ['electric_field', 'magnetic_field', 'current'],
 };
 
@@ -7,6 +7,7 @@ const SCALAR_LABELS = {
   temperature: 'Temperature',
   ion_concentration: 'Ion concentration',
   effective_conductivity: 'σ_eff',
+  charge: 'Charge',
   material: 'Material',
 };
 
@@ -62,7 +63,13 @@ export class Store {
   }
 
   _notify(patch) {
-    for (const fn of this.listeners) fn(this.state, patch);
+    for (const fn of this.listeners) {
+      try {
+        fn(this.state, patch);
+      } catch (err) {
+        console.error('Store listener error:', err);
+      }
+    }
   }
 
   setActiveScalar(name) {
@@ -137,12 +144,15 @@ export class Store {
     const map = {
       time_step: 'timeStep',
       steps_per_frame: 'stepsPerFrame',
-      playing: 'playing',
+      // Do not sync playing from config: the live frame payload already
+      // carries the server's playing state, and overwriting the UI toggle
+      // with a stale connect-time config causes play to immediately pause.
       poisson_enabled: 'poissonEnabled',
       heat_enabled: 'heatEnabled',
       electroneutrality_enabled: 'electroneutralityEnabled',
       butler_volmer_enabled: 'bvEnabled',
       double_layer_enabled: 'dlEnabled',
+      arrow_scale: 'arrowScale',
     };
     for (const [k, v] of Object.entries(map)) {
       if (cfg[k] !== undefined && this.state[v] !== cfg[k]) {
@@ -204,6 +214,7 @@ export class Store {
   addToast(data) {
     if (!data || !data.message) return;
     const toast = { kind: data.kind || 'info', message: data.message };
+    window.__addToastCalled = (window.__addToastCalled||0)+1;
     console.log('Store.addToast', toast);
     this.state.toast = toast;
     this._notify({ toast });

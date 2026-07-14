@@ -17,7 +17,11 @@ export function updateArrows(scene, arrows) {
   const count = arrows.count;
   const points = arrows.points.flat ? arrows.points.flat() : arrows.points;
   const colors = (arrows.colors || []).flat ? (arrows.colors || []).flat() : (arrows.colors || []);
+  const strengths = arrows.strengths && arrows.strengths.length ?
+    (arrows.strengths.flat ? arrows.strengths.flat() : arrows.strengths) :
+    null;
   const baseSize = Number(arrows.base_size ?? 1.0);
+  const arrowScale = Number(arrows.arrow_scale ?? 1.0);
 
   const root = new THREE.Group();
   const material = new THREE.MeshBasicMaterial({
@@ -43,10 +47,7 @@ export function updateArrows(scene, arrows) {
   headMesh.frustumCulled = false;
 
   const halfVoxel = 0.5 * baseSize;
-  const minLen = Math.max(0.4, 0.6 * baseSize);
-  const maxLen = Math.max(2.0, 2.5 * baseSize);
   const geoHeight = 1.25;
-  const baseScale = Math.max(0.08, baseSize * 0.15);
 
   for (let i = 0; i < count; i++) {
     const i6 = i * 6;
@@ -69,13 +70,24 @@ export function updateArrows(scene, arrows) {
       dummy.rotation.set(0, 0, 0);
     } else {
       _dir.normalize();
-      len = Math.max(minLen, Math.min(maxLen, len));
-      const tail = _dir.clone().multiplyScalar(-halfVoxel).add(_origin);
-      const tip = _dir.clone().multiplyScalar(halfVoxel + len).add(_origin);
-      const renderedLen = tip.distanceTo(tail);
-      const scale = renderedLen / geoHeight;
+      // The backend already encodes arrow length proportionally to field
+      // intensity (tip = origin + direction * base_size * arrow_scale * strength).
+      // Preserve that proportionality; only add a tiny minimum so zero-field
+      // arrows still show orientation.
+      const strength = strengths ? Math.max(0, Math.min(1, strengths[i] ?? 1)) : 1.0;
+      const minLen = 0.12 * baseSize * arrowScale;
+      const proportionalLen = len * arrowScale;
+      const renderedLen = Math.max(minLen, proportionalLen);
 
-      dummy.scale.set(scale * baseScale, scale, scale * baseScale);
+      // Constant thickness regardless of field strength; length is the only
+      // intensity cue.
+      const radius = Math.max(0.04, baseSize * 0.12 * arrowScale);
+      const tail = _dir.clone().multiplyScalar(-halfVoxel).add(_origin);
+      const tip = _dir.clone().multiplyScalar(halfVoxel + renderedLen).add(_origin);
+      const actualLen = tip.distanceTo(tail);
+      const scaleY = actualLen / geoHeight;
+
+      dummy.scale.set(radius, scaleY, radius);
       dummy.position.copy(tail);
       _quat.setFromUnitVectors(shaftUp, _dir);
       dummy.setRotationFromQuaternion(_quat);

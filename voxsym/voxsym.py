@@ -5,6 +5,7 @@ import inspect
 import datetime
 import time
 import threading
+import queue
 
 import numpy as np
 from typing import Optional
@@ -56,6 +57,7 @@ class VoxSym:
     LAYER_MATERIAL = "material"
     LAYER_ION_CONCENTRATION = "ion_concentration"
     LAYER_EFFECTIVE_CONDUCTIVITY = "effective_conductivity"
+    LAYER_CHARGE = "charge"
 
     def __init__(self, port: int = 8080, *, host: str = "0.0.0.0",
                  backend: Optional[str] = "webgl",
@@ -156,6 +158,9 @@ class VoxSym:
 
         # Number of simulation sub-steps per rendered frame
         self._steps_per_frame = 1
+        # Only recompute EM fields every _em_field_period sub-steps.
+        self._em_field_period = 1
+        self._em_field_counter = 0
 
         # Playback state (loaded simulations replay in the main window)
         self._playback_mode = False
@@ -177,6 +182,9 @@ class VoxSym:
         self._topology: Optional[GridTopology] = None
         self._topology_voxel_count = 0
 
+        # Cached heterogeneous-interface set for fast interfacial electrochemistry.
+        self._interface_edge_indices: Optional[np.ndarray] = None
+
         # Simulation control flags (driven by GUI play/pause/stop buttons)
         self._simulation_running = True
         self._simulation_paused = threading.Event()
@@ -185,12 +193,30 @@ class VoxSym:
         # Snapshot of initial voxel state for reset
         self._initial_state: Optional[dict] = None
 
+        # Thread-safe command queue between the WebSocket IOLoop and the sim thread.
+        self._cmd_queue: queue.SimpleQueue = queue.SimpleQueue()
+        self._simulation_thread: Optional[threading.Thread] = None
+
         # Keep the last recorder's data even after stop_recording()
         self._last_recorder = None
 
-    # ==================================================================
-    # Callback hooks for the simulation loop
-    # ==================================================================
+    def schedule_command(self, name: str, **kwargs) -> None:
+        """Enqueue a command to be executed on the simulation thread."""
+        self._cmd_queue.put((name, kwargs))
+
+    def _process_commands(self) -> None:
+        """Drain the command queue and apply each command on the sim thread."""
+        while True:
+            try:
+                name, kwargs = self._cmd_queue.get_nowait()
+            except queue.Empty:
+                break
+            try:
+                handler = getattr(self, f"_cmd_{name}", None)
+                if handler is not None:
+                    handler(**kwargs)
+            except Exception as exc:
+                print(f"[command {name}] {exc}")
 
     def on_start(self, func):
         """Decorator: register a callback run once when ``run_simulation()`` starts.
@@ -266,10 +292,169 @@ class VoxSym:
     def stop(self):
         """Signal the simulation loop to exit."""
         self._simulation_running = False
+        self._simulation_paused.set()
+        if self._playback_mode:
+            self._playback_playing = False
+        t = self._simulation_thread
+        if t is not None and t.is_alive() and t != threading.current_thread():
+            t.join(timeout=2.0)
+        self._simulation_thread = None
 
     def is_playing(self) -> bool:
         """Return whether the simulation is currently playing (not paused)."""
         return self._simulation_running and not self._simulation_paused.is_set()
+
+    def _cmd_play(self):
+        self.play()
+        self._broadcast_state_patch()
+
+    def _cmd_pause(self):
+        self.pause()
+        self._broadcast_state_patch()
+
+    def _cmd_stop(self):
+        self.stop()
+        self._broadcast_state_patch()
+
+    def _cmd_restart(self):
+        self.stop()
+        self.reset_to_initial()
+        self.reset_simulation()
+        self.play()
+        self._broadcast_state_patch()
+
+    def _cmd_reset(self):
+        self.reset_to_initial()
+        self.reset_simulation()
+        # Force a render so the client sees t=0 immediately.
+        self.render()
+        if self._webgl_server is not None:
+            try:
+                self._webgl_server.broadcast_config()
+            except Exception:
+                pass
+
+    def _cmd_single_step(self):
+        was_paused = self._simulation_paused.is_set()
+        self._simulation_paused.clear()
+        # Run exactly one frame of the default loop.
+        step_dt = self.dt
+        self._em_field_counter = 0
+        for _ in range(self._steps_per_frame):
+            if self._em_field_counter == 0:
+                self.apply_em_fields(t=self._elapsed_time)
+            self._em_field_counter += 1
+            if self._em_field_counter >= self._em_field_period:
+                self._em_field_counter = 0
+            self.step_and_update(step_dt)
+            self._process_commands()
+            if self._simulation_paused.is_set():
+                break
+        self._frame_index += 1
+        for cb in self._on_gui_update_callbacks:
+            try:
+                cb()
+            except Exception as exc:
+                print(f"[on_gui_update] {exc}")
+        self.render()
+        if was_paused:
+            self._simulation_paused.set()
+
+    def _broadcast_state_patch(self):
+        """Push current play/pause state to clients without a full render."""
+        server = getattr(self, "_webgl_server", None)
+        if server is not None:
+            try:
+                server.broadcast_state_patch(playing=bool(self.is_playing()))
+            except Exception:
+                pass
+
+    def _cmd_record(self):
+        recorder = getattr(self, "_recorder", None)
+        if recorder is not None:
+            recorder.toggle_recording()
+
+    def _cmd_set_layer(self, layer: str, active: bool) -> None:
+        self.set_layer(layer, active)
+        if active and layer in ("electric_field", "magnetic_field", "current"):
+            try:
+                self.apply_em_fields(t=self.elapsed_time)
+            except Exception:
+                pass
+        self.render()
+
+    def _cmd_set_opacity(self, value: float) -> None:
+        backend = getattr(self, "_webgl_backend", None)
+        if backend is not None and hasattr(backend, "set_opacity"):
+            backend.set_opacity(float(value))
+        if self._gui is not None:
+            self._gui._opacity_value = float(value)
+        self.render()
+
+    def _cmd_set_cross_section(self, axis: Optional[str], pos: Optional[float] = None) -> None:
+        viz = getattr(self, "_visualizer", None)
+        if viz is None:
+            return
+        viz.cross_section_axis = None if axis == "off" else axis
+        if pos is not None:
+            viz.cross_section_pos = float(pos)
+        self.render()
+
+    def _cmd_set_arrow_scale(self, value: float) -> None:
+        viz = getattr(self, "_visualizer", None)
+        if viz is not None:
+            viz.field_arrow_scale = float(value)
+        backend = getattr(self, "_webgl_backend", None)
+        if backend is not None:
+            backend._arrow_scale = float(value)
+        self.render()
+
+    def _cmd_set_time_scale(self, value: int) -> None:
+        if value > 0:
+            self.set_steps_per_frame(int(value))
+
+    def _cmd_set_time_step(self, value: float) -> None:
+        if value > 0:
+            self.set_time_step(float(value))
+
+    def _cmd_reset_time(self) -> None:
+        self.reset_time()
+
+    def _cmd_set_poisson(self, active: bool) -> None:
+        self.set_enable_poisson(bool(active))
+
+    def _cmd_set_heat(self, active: bool) -> None:
+        if active:
+            self.enable_heat()
+        else:
+            self.disable_heat()
+
+    def _cmd_set_electroneutrality(self, active: bool) -> None:
+        self.set_electroneutrality(bool(active))
+
+    def _cmd_set_butler_volmer(self, active: bool) -> None:
+        self.set_enable_butler_volmer(bool(active))
+
+    def _cmd_set_double_layer(self, active: bool) -> None:
+        self.set_enable_double_layer(bool(active))
+
+    def _cmd_load_simulation_data(self, filename: str) -> None:
+        import logging
+        logging.info("load_simulation_data requested: %s", filename)
+
+    def _cmd_load_simulation(self, filename: str) -> None:
+        import logging
+        logging.info("load_simulation requested: %s", filename)
+
+    def _cmd_seek(self, frame: int) -> None:
+        player = getattr(self, "_player", None)
+        if player is not None:
+            player.goto_frame(int(frame))
+
+    def _cmd_playback(self) -> None:
+        player = getattr(self, "_player", None)
+        if player is not None:
+            player.play()
 
     def reset_simulation(self):
         """Reset simulation control flags to their initial state."""
@@ -371,8 +556,31 @@ class VoxSym:
             except Exception as exc:
                 print(f"[on_start] {exc}")
 
+        if self._simulation_thread is not None and self._simulation_thread.is_alive():
+            return
+
+        self._simulation_thread = threading.Thread(
+            target=self._simulation_loop, args=(dt, sleep), daemon=True
+        )
+        self._simulation_thread.start()
+
+        # Keep the calling thread alive so the process doesn't exit; the
+        # actual simulation work happens on the daemon thread above.
         try:
             while self._simulation_running:
+                t = self._simulation_thread
+                if t is not None and t.is_alive():
+                    t.join(timeout=0.5)
+        except KeyboardInterrupt:
+            print("\nStopping...")
+        finally:
+            self.stop()
+
+    def _simulation_loop(self, dt: Optional[float], sleep: float) -> None:
+        """Simulation main loop — runs on its own thread."""
+        try:
+            while self._simulation_running:
+                self._process_commands()
                 if not self._simulation_paused.is_set():
                     if self._playback_mode:
                         self._advance_playback()
@@ -384,11 +592,24 @@ class VoxSym:
                                 except Exception as exc:
                                     print(f"[on_update] {exc}")
                         else:
-                            # Default loop: apply EM fields, sub-step, update GUI
+                            # Default loop: apply EM fields, sub-step, update GUI.
+                            # Process commands between sub-steps so control inputs
+                            # are not delayed by a long rendered frame.
                             step_dt = dt if dt is not None else self.dt
-                            for _ in range(self._steps_per_frame):
-                                self.apply_em_fields(t=self._elapsed_time)
+                            self._em_field_counter = 0
+                            for i in range(self._steps_per_frame):
+                                if self._em_field_counter == 0:
+                                    self.apply_em_fields(t=self._elapsed_time)
+                                self._em_field_counter += 1
+                                if self._em_field_counter >= self._em_field_period:
+                                    self._em_field_counter = 0
                                 self.step_and_update(step_dt)
+                                # Drain the command queue after each sub-step so
+                                # play/pause/layer changes feel immediate even
+                                # while a frame is still stepping.
+                                self._process_commands()
+                                if self._simulation_paused.is_set():
+                                    break
                         self._frame_index += 1
 
                         # GUI update callbacks run after every frame
@@ -399,7 +620,12 @@ class VoxSym:
                                 print(f"[on_gui_update] {exc}")
 
                 self.render()
-                time.sleep(sleep)
+                # Throttle render/broadcast while paused to avoid flooding
+                # clients with identical frames and to reduce stale-frame races.
+                if self._simulation_paused.is_set():
+                    time.sleep(max(sleep, 0.1))
+                else:
+                    time.sleep(sleep)
         except KeyboardInterrupt:
             print("\nStopping...")
         finally:
@@ -528,17 +754,8 @@ class VoxSym:
         )
 
     def set_enable_poisson(self, enabled: bool = True):
-        """Enable / disable automatic Poisson solve per step.
-
-        When enabled, ``step_and_update()`` solves ∇²φ = −ρ/ε from the
-        current voxel charges and overwrites ``voxel.electric_field`` with
-        ``E = −∇φ`` *before* the ion transport step.  This couples ionic
-        charge density to the electric field self-consistently.
-
-        Disabled by default so existing examples keep their prescribed
-        fields.
-        """
         self._enable_poisson = bool(enabled)
+        self._invalidate_max_stable_dt_cache()
 
     @property
     def enable_poisson(self) -> bool:
@@ -546,16 +763,19 @@ class VoxSym:
         return self._enable_poisson
 
     def set_electroneutrality(self, enabled: bool = True):
-        """Enable/disable the electroneutrality relaxation step."""
         self._enforce_electroneutrality = bool(enabled)
 
     def set_enable_butler_volmer(self, enabled: bool = True):
-        """Enable/disable Butler–Volmer faradaic charge transfer."""
         self._enable_butler_volmer = bool(enabled)
+        self._invalidate_max_stable_dt_cache()
 
     def set_enable_double_layer(self, enabled: bool = True):
-        """Enable/disable Stern double-layer capacitive screening."""
         self._enable_double_layer = bool(enabled)
+        self._invalidate_max_stable_dt_cache()
+
+    def set_dt_safety_factor(self, factor: float = 0.5):
+        self.dt_safety_factor = float(factor)
+        self._invalidate_max_stable_dt_cache()
 
     def _relax_electroneutrality(self):
         """Adjust anion concentrations so net charge density is small.
@@ -730,6 +950,10 @@ class VoxSym:
         if self._recorder is not None:
             self._recorder.record(self._elapsed_time)
 
+        # Electric fields and concentrations have changed; invalidate the
+        # cached CFL cap so the next sub-step uses the updated E-field.
+        self._invalidate_max_stable_dt_cache()
+
     def step_and_update(self, dt: Optional[float] = None):
         """Run ``step_simulation(dt)`` followed immediately by ``update()``.
 
@@ -782,13 +1006,15 @@ class VoxSym:
     def max_stable_dt(self) -> float:
         """Return the most restrictive stable dt across enabled solvers.
 
-        This is the raw CFL cap from ``stability.py``.  The safety factor
-        is applied separately in ``step_and_update``.
+        The result is cached until the next call invalidates the cache.
         """
         from voxsym.physics.stability import (
             max_stable_dt_for_heat_solver,
             max_stable_dt_for_ion_solver,
         )
+
+        if getattr(self, "_cached_max_stable_dt", None) is not None:
+            return self._cached_max_stable_dt
 
         self._ensure_ion_solver()
         self._ion_solver._build_arrays()
@@ -801,8 +1027,18 @@ class VoxSym:
 
         finite_caps = [c for c in caps if np.isfinite(c) and c > 0]
         if not finite_caps:
-            return float("inf")
-        return float(min(finite_caps))
+            cap = float("inf")
+        else:
+            cap = float(min(finite_caps))
+
+        # Cache the cap.  It is invalidated whenever the grid or solver
+        # topology changes (see _invalidate_topology and update()).
+        self._cached_max_stable_dt = cap
+        return cap
+
+    def _invalidate_max_stable_dt_cache(self):
+        """Clear the cached stable-dt cap."""
+        self._cached_max_stable_dt = None
 
     # ==================================================================
     # Heat source / boundary configuration
@@ -972,6 +1208,7 @@ class VoxSym:
     def add_uniform_electric(self, ex: float, ey: float, ez: float):
         """Add a constant electric field (Ex, Ey, Ez) in V/m."""
         self._ensure_em_solver().add_uniform_electric(ex, ey, ez)
+        self._invalidate_max_stable_dt_cache()
 
     def add_uniform_magnetic(self, bx: float, by: float, bz: float):
         """Add a constant magnetic field (Bx, By, Bz) in T."""
@@ -980,6 +1217,7 @@ class VoxSym:
     def add_point_charge(self, charge: float, x: float, y: float, z: float):
         """Add a point charge [C] at (x, y, z)."""
         self._ensure_em_solver().add_point_charge(charge, x, y, z)
+        self._invalidate_max_stable_dt_cache()
 
     def add_oscillating_electric(
         self, ax: float, ay: float, az: float,
@@ -1002,22 +1240,25 @@ class VoxSym:
         if self._em_solver is not None:
             self._em_solver.apply_to_voxels(self.voxels, t)
         self._compute_currents()
+        self._invalidate_max_stable_dt_cache()
 
     def _compute_currents(self):
         """Compute current density J = σE for every voxel (Ohm's law)."""
         for v in self.voxels:
+            E = np.asarray(v.electric_field, dtype=np.float64)
             if v.material is not None and v.material.conductivity > 0:
                 sigma = v.material.effective_conductivity(v.ion_concentration)
                 v.effective_conductivity = sigma
-                v.current_density = sigma * v.electric_field
+                v.current_density = np.asarray(sigma * E, dtype=np.float32)
             else:
                 v.effective_conductivity = 0.0
-                v.current_density = np.zeros(3)
+                v.current_density = np.zeros(3, dtype=np.float32)
 
     def clear_em_fields(self):
         """Remove all EM field sources."""
         if self._em_solver is not None:
             self._em_solver.clear()
+        self._invalidate_max_stable_dt_cache()
 
     # ==================================================================
     # Camera  (scaling-aware)
@@ -1668,9 +1909,24 @@ class VoxSym:
 
         The default is 1.  Increase this when the simulation time-step is
         much smaller than the display frame rate (e.g. 100 sub-steps of
-        1\u00b5s per frame).
+        1µs per frame).
         """
         self._steps_per_frame = max(1, int(n))
+
+    def set_em_field_period(self, n: int):
+        """Recompute EM fields only once every *n* sub-steps (default 1).
+
+        A larger period skips expensive Poisson/current updates during
+        sub-steps where the field is not expected to change much, while
+        the ion/heat solvers continue at full resolution.  Set to the same
+        value as ``steps_per_frame`` to solve EM fields once per rendered
+        frame.
+        """
+        self._em_field_period = max(1, int(n))
+
+    def get_em_field_period(self) -> int:
+        """Return the current EM-field update period."""
+        return self._em_field_period
 
     def single_step(self):
         """Advance physics by one time step."""
@@ -1694,6 +1950,7 @@ class VoxSym:
 
     def get_config(self):
         """JSON-safe current simulation configuration."""
+        viz = getattr(self, "_visualizer", None)
         return {
             "time_step": float(getattr(self, "dt", 1e-3)),
             "steps_per_frame": int(getattr(self, "_steps_per_frame", 1)),
@@ -1704,6 +1961,7 @@ class VoxSym:
             "electroneutrality_enabled": bool(getattr(self, "_enforce_electroneutrality", False)),
             "butler_volmer_enabled": bool(getattr(self, "_enable_butler_volmer", False)),
             "double_layer_enabled": bool(getattr(self, "_enable_double_layer", False)),
+            "arrow_scale": float(getattr(viz, "field_arrow_scale", 1.2)),
         }
 
     def add_voxel(self, voxel):
@@ -1740,12 +1998,17 @@ class VoxSym:
         """
         self._topology = None
         self._topology_voxel_count = 0
+        self._interface_edge_indices = None
+        self._invalidate_max_stable_dt_cache()
         if self._heat_solver is not None:
             self._heat_solver._built = False
             self._heat_solver._topology_voxel_count = -1
         if self._ion_solver is not None:
             self._ion_solver._built = False
             self._ion_solver._topology_voxel_count = -1
+        if self._interfacial_echem is not None:
+            self._interfacial_echem._built = False
+            self._interfacial_echem._edge_src = None
 
     def get_topology(self):
         """Return the cached ``GridTopology`` for the current voxel grid.

@@ -51,6 +51,20 @@ html, body, #app {
 .nav-item:hover { background: #f0f0f0; color: #000; }
 .nav-item.active { border-color: var(--accent); color: var(--accent); font-weight: 600; }
 
+.recording-indicator {
+  margin-left: auto;
+  font-size: 12px;
+  font-weight: 700;
+  color: #ff2d2d;
+  animation: rec-pulse 1.2s ease-in-out infinite;
+  user-select: none;
+}
+
+@keyframes rec-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 #panel {
   position: fixed;
   top: var(--topbar-h);

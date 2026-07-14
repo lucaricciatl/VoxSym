@@ -111,42 +111,36 @@ def _compute_electric_field(
     edge_dst: np.ndarray,
     dx: np.ndarray,
 ) -> np.ndarray:
-    """Compute E = −∇φ  via central differences along existing edges [V/m]."""
+    """Compute E = −∇φ via central differences along existing edges [V/m]."""
     n = len(phi)
     grad = np.zeros((n, 3), dtype=np.float64)
     counts = np.zeros(n, dtype=np.int32)
 
-    dphi = phi[edge_dst] - phi[edge_src]
-    axes = np.zeros((len(edge_src), 3), dtype=np.float64)
-    edge_len = np.zeros(len(edge_src), dtype=np.float64)
-    for e in range(len(edge_src)):
-        s = edge_src[e]
-        d = edge_dst[e]
-        dx_ = voxels[d].x - voxels[s].x
-        dy_ = voxels[d].y - voxels[s].y
-        dz_ = voxels[d].z - voxels[s].z
-        norm = np.sqrt(dx_ * dx_ + dy_ * dy_ + dz_ * dz_) + 1e-30
-        axes[e] = (dx_ / norm, dy_ / norm, dz_ / norm)
-        edge_len[e] = norm
-
-    safe_len = np.where(edge_len > 0, edge_len, 1.0)
-    dphi_over_len = dphi / safe_len
-    # Vectorized accumulation of the 3-vector gradient contribution.
-    for axis_idx in range(3):
-        component = dphi_over_len * axes[:, axis_idx]
-        np.add.at(grad[:, axis_idx], edge_src, component)
-    np.add.at(counts, edge_src, 1)
+    if len(edge_src) > 0:
+        # Vectorized edge vectors and 1D dphi.
+        vs = np.array([[v.x, v.y, v.z] for v in voxels], dtype=np.float64)
+        edge_vec = vs[edge_dst] - vs[edge_src]
+        edge_len = np.linalg.norm(edge_vec, axis=1)
+        safe_len = np.where(edge_len > 0, edge_len, 1.0)
+        dphi = phi[edge_dst] - phi[edge_src]
+        dphi_over_len = dphi / safe_len
+        # Unit direction vectors.
+        axes = edge_vec / safe_len[:, None]
+        # Accumulate each component separately.
+        for axis_idx in range(3):
+            component = dphi_over_len * axes[:, axis_idx]
+            np.add.at(grad[:, axis_idx], edge_src, component)
+        np.add.at(counts, edge_src, 1)
 
     valid = counts > 0
     denom = np.where(valid, counts, 1).reshape(-1, 1)
     grad = np.where(valid.reshape(-1, 1), grad / denom, grad)
 
-    # E = −∇φ
     return -grad
 
 
 def solve_potential_from_charge(
-    voxsym: VoxSym,
+    voxsym,
     max_iter: int = 500,
     tol: float = 1e-6,
     epsilon: Optional[np.ndarray] = None,
@@ -155,42 +149,29 @@ def solve_potential_from_charge(
 ) -> Optional[np.ndarray]:
     """Solve Poisson's equation from voxel charges and store E = −∇φ.
 
-    This is the standalone entry point used by ``VoxSym.solve_poisson()``.
-
-    Args:
-        voxsym: VoxSym instance containing the voxel grid.
-        max_iter: Maximum Jacobi iterations.
-        tol: Convergence tolerance on max |Δφ|.
-        epsilon: Per-voxel permittivity array [F/m].  If None, vacuum
-            permittivity is used everywhere.
-        return_phi: If True, also return the solved potential array.
-        dirichlet: Optional {voxel_index: fixed_potential_V} mapping for
-            Dirichlet boundaries.
-
-    Returns:
-        The electric field array (N, 3) if ``return_phi`` is False,
-        otherwise a tuple (E, phi).
-
-    Boundary conditions:
-        Dirichlet where ``dirichlet`` provides a value; otherwise Neumann
-        (zero normal derivative of φ) on the outer surface of the voxel
-        cloud.  Neumann is implicit because only face-connected neighbors are
-        summed; a missing neighbor contributes as if φ_outside = φ_inside,
-        giving  ∂φ/∂n = 0  and therefore E_n = 0.
+    Uses the shared GridTopology on *voxsym* so the coordinate map is not
+    rebuilt every call.
     """
     voxels = voxsym.get_voxels()
     n = len(voxels)
     if n == 0:
         return None
 
-    coord_to_idx, edge_src, edge_dst, neighbors, dx = _build_topology(voxels)
+    topology = voxsym.get_topology()
+    edge_src = topology.edges_src
+    edge_dst = topology.edges_dst
+    # Neighbor counts for the Jacobi update: each directed edge contributes
+    # one face, so the count per voxel equals its number of face neighbours.
+    neighbors = np.zeros(n, dtype=np.int32)
+    if len(edge_src) > 0:
+        np.add.at(neighbors, edge_src, 1)
+    dx = np.array([v.size for v in voxels], dtype=np.float64)
 
     # Net charge density from explicit free charges plus cation/anion imbalance.
     charges = np.array([v.charge for v in voxels], dtype=np.float64)
     for i, v in enumerate(voxels):
         zp = float(getattr(v.material, "ionic_valence", 1)) if v.material else 1.0
         zn = float(getattr(v.material, "anion_valence", -1)) if v.material else -1.0
-        # Add contribution of mobile cations and anions to charge density [C/m³].
         charges[i] += ELEMENTARY_CHARGE * (zp * v.ion_concentration + zn * v.anion_concentration)
 
     if epsilon is None:
@@ -203,12 +184,9 @@ def solve_potential_from_charge(
         if len(eps) != n:
             raise ValueError(f"epsilon length {len(eps)} != voxel count {n}")
 
-    # RHS = −ρ/ε .  charge density ρ = charge / volume.
     vol = dx ** 3
     rho = charges / np.where(vol > 0, vol, 1.0)
     rho_over_eps = rho / np.where(eps > 0, eps, EPSILON_0)
-    # For the Jacobi update we use dx² · ρ/ε .  Use the local dx² as a
-    # scale; the solver is effectively normalising by neighbor count.
     rhs = rho_over_eps * (dx ** 2)
 
     phi = np.zeros(n, dtype=np.float64)
@@ -216,7 +194,6 @@ def solve_potential_from_charge(
     for idx, val in (dirichlet or {}).items():
         phi[idx] = val
 
-    # Per-voxel Dirichlet flags from the Voxel object override the mapping.
     for i, v in enumerate(voxels):
         if getattr(v, "potential_fixed", False):
             fixed.add(i)
@@ -225,12 +202,14 @@ def solve_potential_from_charge(
 
     E = _compute_electric_field(phi, voxels, edge_src, edge_dst, dx)
 
-    # Store results on voxels
     for i, v in enumerate(voxels):
         v.electric_field = np.asarray(E[i], dtype=np.float32)
-        # Also attach the scalar potential for inspection / physics coupling.
         v.phi = float(phi[i])
 
     if return_phi:
         return E, phi
     return E
+
+
+# Legacy alias for code that imported the function directly.
+solve_potential_from_charge_voxels = solve_potential_from_charge

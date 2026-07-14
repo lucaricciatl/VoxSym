@@ -193,7 +193,38 @@ def build_memristor(backend="webgl", port=9000, host="0.0.0.0"):
                 v.anion_concentration = 300.0  # electroneutral salt
                 vs.add_voxel(v)
 
+    # No seed charges: the only potential sources are the fixed electrode
+    # potentials and the charge that develops from ion transport.
+    # _set_interface_charges(vs, size)
+
     return vs
+
+
+def _set_interface_charges(vs, size: float = 1e-5):
+    """Seed a small double-layer charge on the gold/electrolyte contacts.
+
+    The left gold pad (x < 2*size) carries a positive surface charge and
+    the adjacent electrolyte a negative counter-charge; the right pad is
+    negative with positive counter-charge.  This makes the Poisson field
+    and the charge-density scalar layer visible immediately, even before
+    ions have time to migrate.
+    """
+    interface_depth = 1.5 * size
+    q_surface = 1e-15  # C per voxel; produces ~kV/m E-field, visible but stable at 1 ms steps
+    for v in vs.get_voxels():
+        if v.material is GOLD:
+            if v.x < 2 * size:
+                v.charge = q_surface
+            elif v.x > (GRID_X - 1) * size:
+                v.charge = -q_surface
+        elif v.material is H2SO4_ELECTROLYTE:
+            if abs(v.x - 2 * size) <= interface_depth:
+                v.charge = -q_surface
+            elif abs(v.x - (GRID_X - 1) * size) <= interface_depth:
+                v.charge = q_surface
+        elif v.material is TI3C2_MXENE:
+            if abs(v.x - (GRID_X - 1) * size) <= interface_depth:
+                v.charge = q_surface
 
 
 # ---------------------------------------------------------------------------
@@ -205,25 +236,45 @@ if __name__ == "__main__":
 
     # Apply fixed potentials to the gold pad voxels only.  The graphene
     # and MXene blocks are driven indirectly through the self-consistent
-    # Poisson field.  Left pad: oscillating 1 V; right pad: 0 V.
+    # Poisson field.  Use a small DC bias so the explicit Nernst–Planck
+    # step stays stable at the 1 ms display time-step and diffusion is
+    # visible, rather than a high-frequency AC signal that blurs out.
     vs.set_voltage_boundary(
         x_range=(-2 * size, 1 * size),
         y_range=None,
         z_range=(-1 * size, 0),
-        value=lambda t: 5.0 * np.sin(2.0 * np.pi * 5000.0 * t),
+        value=0.0,
     )
     vs.set_voltage_boundary(
         x_range=((GRID_X - 1) * size, (GRID_X + 4) * size),
         y_range=None,
         z_range=(-1 * size, 0),
-        value=0.0,
+        value=0.1,
     )
+
+    # No seed charges: the only potential sources are the fixed electrode
+    # potentials and the charge that develops from ion transport.
+    # Initial ion distribution: high concentration in the left electrolyte,
+    # zero in the right electrolyte/MXene, so diffusion into MXene is visible.
+    for v in vs.get_voxels():
+        if v.material is H2SO4_ELECTROLYTE:
+            if v.x < 3.5 * size:
+                v.ion_concentration = 1000.0
+                v.anion_concentration = 1000.0
+            else:
+                v.ion_concentration = 0.0
+                v.anion_concentration = 0.0
+        if v.material is TI3C2_MXENE:
+            v.ion_concentration = 0.0
+            v.anion_concentration = 0.0
+    vs.snapshot_initial_state()
 
     vs.disable_heat()             # isothermal memristor: avoid heat CFL bottleneck
     vs.set_time_step(1e-3)        # 1 ms physical step; CFL caps respected internally
-    vs.set_steps_per_frame(10)    # 10 ms of physics per rendered frame
+    vs.set_steps_per_frame(50)    # 50 ms of physics per rendered frame
     vs.set_enable_poisson(True)   # self-consistent E from ρ/ε and boundary voltages
-    vs.set_poisson_max_iter(200)  # fast enough per frame for this grid size
+    vs.set_poisson_max_iter(50, tol=1e-4)  # preview-quality fast Poisson solve
+    vs.set_em_field_period(50)    # only recompute Poisson/currents once per frame
     # Note: Butler–Volmer and double-layer solvers are available via
     # set_enable_butler_volmer() / set_enable_double_layer() but are left
     # disabled here. They require parameter tuning at this voxel scale; the
@@ -234,7 +285,8 @@ if __name__ == "__main__":
     vs.set_layer(VoxSym.LAYER_ELECTRIC_FIELD, True)
     vs.set_layer(VoxSym.LAYER_CURRENT, True)
     vs.set_layer(VoxSym.LAYER_ION_CONCENTRATION, True)
-    vs.set_active_scalar_layer("ion_concentration")
+    vs.set_layer(VoxSym.LAYER_CHARGE, True)
+    vs.set_active_scalar_layer("charge")
     vs.auto_camera()
     vs.opacity = 0.4
 
@@ -247,4 +299,4 @@ if __name__ == "__main__":
         stats = vs.concentration_stats()
         print(f"Simulation time: {_fmt_time(vs.elapsed_time)}  |  Ion conc: {stats[0]:.0f} → {stats[1]:.0f} mol/m³")
 
-    vs.run_simulation(sleep=0.002)
+    vs.run_simulation(sleep=0.001)

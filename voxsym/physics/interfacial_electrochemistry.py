@@ -120,10 +120,54 @@ class InterfacialElectrochemistry:
             self._topology = GridTopology([])
         else:
             self._topology = GridTopology(voxels, connectivity=6)
-        self._edge_src = self._topology.edges_src
-        self._edge_dst = self._topology.edges_dst
+        src = self._topology.edges_src
+        dst = self._topology.edges_dst
+        self._edge_src = src
+        self._edge_dst = dst
         self._edge_axis = self._topology.edges_axis
         self._edge_sign = self._topology.edges_sign
+
+        # Precompute heterogeneous interface mask + per-edge material
+        # properties once.  Only those edges need Butler–Volmer / DL work.
+        if n > 0 and src is not None and len(src) > 0:
+            mat_src = np.array(
+                [
+                    voxels[i].material.name if voxels[i].material is not None else "none"
+                    for i in src
+                ],
+                dtype=object,
+            )
+            mat_dst = np.array(
+                [
+                    voxels[i].material.name if voxels[i].material is not None else "none"
+                    for i in dst
+                ],
+                dtype=object,
+            )
+            self._heterogeneous = mat_src != mat_dst
+            self._edge_i0 = np.array([
+                float(getattr(voxels[i].material, "exchange_current_density", 0.0))
+                if voxels[i].material is not None else 0.0
+                for i in src
+            ], dtype=np.float64)
+            self._edge_alpha = np.array([
+                float(getattr(voxels[i].material, "charge_transfer_coefficient", 0.5))
+                if voxels[i].material is not None else 0.5
+                for i in src
+            ], dtype=np.float64)
+            self._edge_Cs = np.array([
+                float(getattr(voxels[i].material, "stern_capacitance", 0.0))
+                if voxels[i].material is not None else 0.0
+                for i in src
+            ], dtype=np.float64)
+            self._edge_dx = np.array([voxels[i].size for i in src], dtype=np.float64)
+        else:
+            self._heterogeneous = np.array([], dtype=bool)
+            self._edge_i0 = np.array([], dtype=np.float64)
+            self._edge_alpha = np.array([], dtype=np.float64)
+            self._edge_Cs = np.array([], dtype=np.float64)
+            self._edge_dx = np.array([], dtype=np.float64)
+
         self._built = True
 
     def compute_sources(
@@ -152,8 +196,26 @@ class InterfacialElectrochemistry:
 
         src = self._edge_src
         dst = self._edge_dst
+        n = len(voxels)
+        dC = np.zeros(n, dtype=np.float64)
+        dQ = np.zeros(n, dtype=np.float64)
+        if n == 0:
+            return dC, dQ
+
         if src is None or len(src) == 0:
             return dC, dQ
+
+        # Only consider precomputed heterogeneous interface edges.
+        het = self._heterogeneous
+        if not het.any():
+            return dC, dQ
+        src_h = src[het]
+        dst_h = dst[het]
+        i0_h = self._edge_i0[het]
+        alpha_h = self._edge_alpha[het]
+        Cs_h = self._edge_Cs[het]
+        dx_h = self._edge_dx[het]
+        face_area = dx_h * dx_h
 
         T = float(getattr(self.voxsym, "temperature", 300.0))
 
@@ -161,92 +223,60 @@ class InterfacialElectrochemistry:
             float(getattr(v, "phi", 0.0) or getattr(v, "potential", 0.0))
             for v in voxels
         ], dtype=np.float64)
-        phi_src = phi[src]
-        phi_dst = phi[dst]
-
-        # Per-edge material properties from source voxel
-        mat_src = [voxels[i].material for i in src]
-        i0 = np.array([
-            float(getattr(m, "exchange_current_density", 0.0)) if m is not None else 0.0
-            for m in mat_src
-        ], dtype=np.float64)
-        alpha = np.array([
-            float(getattr(m, "charge_transfer_coefficient", 0.5)) if m is not None else 0.5
-            for m in mat_src
-        ], dtype=np.float64)
-        C_s = np.array([
-            float(getattr(m, "stern_capacitance", 0.0)) if m is not None else 0.0
-            for m in mat_src
-        ], dtype=np.float64)
-
-        # Heterogeneous interface mask
-        name_src = np.array([getattr(m, "name", "none") if m is not None else "none" for m in mat_src])
-        name_dst = np.array([voxels[i].material.name if voxels[i].material is not None else "none" for i in dst])
-        heterogeneous = name_src != name_dst
-
-        # Geometric area per edge (shared face)
-        dx = np.array([voxels[i].size for i in src], dtype=np.float64)
-        face_area = dx * dx
+        phi_src = phi[src_h]
+        phi_dst = phi[dst_h]
 
         if apply_faradaic:
             if species == "cation":
                 conc = np.array([v.ion_concentration for v in voxels], dtype=np.float64)
                 z_arr = np.array([
                     int(getattr(voxels[i].material, "ionic_valence", 0)) if voxels[i].material is not None else 0
-                    for i in src
+                    for i in src_h
                 ], dtype=np.int32)
             else:
                 conc = np.array([v.anion_concentration for v in voxels], dtype=np.float64)
                 z_arr = np.array([
                     int(getattr(voxels[i].material, "anion_valence", 0)) if voxels[i].material is not None else 0
-                    for i in src
+                    for i in src_h
                 ], dtype=np.int32)
-            conc_src = conc[src]
-            conc_dst = conc[dst]
+            conc_src = conc[src_h]
+            conc_dst = conc[dst_h]
 
-            # Use a representative non-zero z for the overpotential scale; per-edge flux uses z_arr.
             z_repr = int(np.max(np.abs(z_arr))) if np.any(z_arr != 0) else 1
             j = butler_volmer_current(
                 phi_src, phi_dst, conc_src, conc_dst,
-                i0, alpha, z_repr, T,
+                i0_h, alpha_h, z_repr, T,
             )
-            # Limit j to avoid blow-up with tiny concentrations / large eta
             j = np.clip(j, -1e9, 1e9)
-            # Only allow faradaic ion transfer into a material that can host
-            # the species (non-zero capacity or diffusivity).  Otherwise the
-            # ion would be injected into an impermeable electrode and clipped
-            # away, draining the electrolyte unphysically.
-            mat_dst = [voxels[i].material for i in dst]
+
+            # Only transfer ions into a material that can host them.
+            mat_dst = [voxels[i].material for i in dst_h]
             can_host_dst = np.array([
                 (getattr(m, "ion_conc_max", 0.0) > 0 or getattr(m, "ion_diffusivity", 0.0) > 0)
                 if m is not None else False
                 for m in mat_dst
             ], dtype=bool)
-            active = heterogeneous & (i0 > 0) & can_host_dst & (z_arr != 0)
+            active = (i0_h > 0) & can_host_dst & (z_arr != 0)
 
-            # Faradaic flux [mol/(m²·s)]; positive = oxidation at src
             flux = np.zeros_like(j)
             z_active = z_arr[active].astype(np.float64)
             flux[active] = j[active] / (z_active * FARADAY)
-            # Accumulate into bulk concentration change: dC/dt = −flux·A / V
-            vol = dx ** 3
+            vol = dx_h ** 3
             dC_src = -(flux[active] * face_area[active] / vol[active])
             dC_dst = +(flux[active] * face_area[active] / vol[active])
-            np.add.at(dC, src[active], dC_src * dt)
-            np.add.at(dC, dst[active], dC_dst * dt)
+            np.add.at(dC, src_h[active], dC_src)
+            np.add.at(dC, dst_h[active], dC_dst)
 
-            # Charge transfered across the interface [C]
             dQ_src = -j[active] * face_area[active] * dt
             dQ_dst = +j[active] * face_area[active] * dt
-            np.add.at(dQ, src[active], dQ_src)
-            np.add.at(dQ, dst[active], dQ_dst)
+            np.add.at(dQ, src_h[active], dQ_src)
+            np.add.at(dQ, dst_h[active], dQ_dst)
 
         if apply_double_layer:
-            active_dl = heterogeneous & (C_s > 0)
-            sigma_dl = stern_double_layer_charge(phi_src, phi_dst, C_s)
-            # Charge added to the src side, removed from dst side
+            active_dl = Cs_h > 0
+            sigma_dl = stern_double_layer_charge(phi_src, phi_dst, Cs_h)
             dQ_dl = sigma_dl[active_dl] * face_area[active_dl] * dt
-            np.add.at(dQ, src[active_dl], +dQ_dl)
-            np.add.at(dQ, dst[active_dl], -dQ_dl)
+            np.add.at(dQ, src_h[active_dl], +dQ_dl)
+            np.add.at(dQ, dst_h[active_dl], -dQ_dl)
 
         return dC, dQ

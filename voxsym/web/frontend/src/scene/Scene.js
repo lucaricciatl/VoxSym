@@ -172,6 +172,56 @@ export class Scene {
     if (this._axesGroup) this._axesGroup.visible = visible;
   }
 
+  /**
+   * Render the current view at `scale` times the canvas resolution and
+   * return a PNG blob.  Uses an offscreen render target so the displayed
+   * canvas size and pixel ratio are left untouched.
+   *
+   * If `overlay` is provided it is called with the 2-D canvas context and
+   * the high-res width/height so callers can paint a time stamp, legend,
+   * colorbar, etc. on top of the rendered scene.
+   */
+  capturePng(scale = 2, overlay = null) {
+    const renderer = this.renderer;
+    const w = Math.max(1, Math.round(renderer.domElement.width * scale));
+    const h = Math.max(1, Math.round(renderer.domElement.height * scale));
+
+    const target = new THREE.WebGLRenderTarget(w, h);
+    const prevTarget = renderer.getRenderTarget();
+    renderer.setRenderTarget(target);
+    renderer.render(this.scene, this.camera);
+
+    const pixels = new Uint8Array(w * h * 4);
+    renderer.readRenderTargetPixels(target, 0, 0, w, h, pixels);
+    renderer.setRenderTarget(prevTarget);
+    target.dispose();
+
+    // WebGL pixels are bottom-up; flip to top-down for the PNG.
+    const canvas = document.createElement('canvas');
+    canvas.width = w;
+    canvas.height = h;
+    const ctx = canvas.getContext('2d');
+    const imgData = ctx.createImageData(w, h);
+    for (let y = 0; y < h; y++) {
+      const src = (h - 1 - y) * w * 4;
+      const dst = y * w * 4;
+      for (let x = 0; x < w * 4; x++) {
+        imgData.data[dst + x] = pixels[src + x];
+      }
+    }
+    ctx.putImageData(imgData, 0, 0);
+
+    if (overlay) {
+      try {
+        overlay(ctx, w, h);
+      } catch (err) {
+        console.error('capturePng overlay failed:', err);
+      }
+    }
+
+    return new Promise((resolve) => canvas.toBlob(resolve, 'image/png'));
+  }
+
   setSelectionBox(position, size, color, name = 'selection') {
     if (size <= 0) {
       this.removeSelectionBox(name);
@@ -203,20 +253,21 @@ export class Scene {
   }
 
   resetCamera() {
-    const cam = this._isOrtho ? this._makeOrthographicCamera() : this.camera;
+    const cam = this.camera;
     cam.position.copy(this._defaultCam.position);
     cam.up.copy(this._defaultCam.up);
     this.controls.target.copy(this._defaultCam.target);
+    cam.lookAt(this._defaultCam.target);
     if (this._isOrtho) {
       const size = 16;
       cam.left = -size;
       cam.right = size;
       cam.top = size / cam.aspect;
       cam.bottom = -size / cam.aspect;
-      cam.updateProjectionMatrix();
     }
     cam.updateProjectionMatrix();
     this.controls.update();
+    this.controls.saveState();
   }
 
   _makeOrthographicCamera() {

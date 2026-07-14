@@ -5,6 +5,7 @@ export class SettingsPanel {
     this.ws = ws;
     this.store.subscribe((state, patch) => {
       if (patch.stepsPerFrame !== undefined) this._updateSteps(state.stepsPerFrame);
+      if (patch.arrowScale !== undefined) this._updateArrowScale(state.arrowScale);
       if (patch.timeStep !== undefined) {
         const el = this.container.querySelector('#dt-val');
         if (el) el.textContent = Number(state.timeStep).toExponential(2);
@@ -18,6 +19,13 @@ export class SettingsPanel {
         }
       }
     });
+  }
+
+  _updateArrowScale(value) {
+    const input = this.container.querySelector('#arrow-scale');
+    if (input && document.activeElement !== input) input.value = value;
+    const val = this.container.querySelector('#arrow-scale-val');
+    if (val) val.textContent = Number(value).toFixed(1);
   }
 
   _updateSteps(value) {
@@ -34,6 +42,9 @@ export class SettingsPanel {
         <label>Steps/frame <span id="steps-val">${this.store.state.stepsPerFrame}</span>
           <input id="steps" type="range" min="1" max="200" step="1" value="${this.store.state.stepsPerFrame}">
         </label>
+        <label>Arrow scale <span id="arrow-scale-val">${Number(this.store.state.arrowScale).toFixed(1)}</span>
+          <input id="arrow-scale" type="range" min="0.2" max="3.0" step="0.1" value="${this.store.state.arrowScale}">
+        </label>
         <div class="btn-stack">
           <button class="btn" id="sim-set-poisson">Poisson: ${this.store.state.poissonEnabled ? 'on' : 'off'}</button>
           <button class="btn" id="sim-set-heat">Heat: ${this.store.state.heatEnabled ? 'on' : 'off'}</button>
@@ -47,6 +58,12 @@ export class SettingsPanel {
     this.container.querySelector('#steps')?.addEventListener('input', (e) => {
       const v = parseInt(e.target.value, 10);
       this.store.setStepsPerFrame(v);
+    });
+
+    this.container.querySelector('#arrow-scale')?.addEventListener('input', (e) => {
+      const v = parseFloat(e.target.value);
+      this.store.setArrowScale(v);
+      this.ws.send({ cmd: 'set_arrow_scale', value: v });
     });
 
     const toggles = [

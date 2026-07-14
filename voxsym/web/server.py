@@ -11,7 +11,10 @@ from typing import Any, Dict, Optional, Set
 
 import tornado.ioloop
 import tornado.web
+from tornado.ioloop import IOLoop
 import tornado.websocket
+import tornado.httpserver
+
 
 from voxsym.web.protocol import CommandPayload, FramePayload
 
@@ -151,9 +154,40 @@ class WebGLServer:
                     self._clients.discard(c)
 
     def _reply(self, client, kind: str, message: str) -> None:
-        """Send a short toast/ack message to a single client."""
+        """Send a short toast/ack message to a single client on the IOLoop."""
+        data = json.dumps({"type": "toast", "kind": kind, "message": message})
+        def _write():
+            try:
+                client.write_message(data)
+            except Exception:
+                pass
         try:
-            client.write_message(json.dumps({"type": "toast", "kind": kind, "message": message}))
+            (self._ioloop or IOLoop.current()).add_callback(_write)
+        except Exception:
+            pass
+
+    def broadcast_state_patch(self, **fields) -> None:
+        """Send a lightweight state update to every connected client.
+
+        Unlike broadcast_frame, this does not include voxel data and is
+        authoritative: it is emitted immediately when play/pause/stop is
+        applied so the UI stays aligned with the engine even while a long
+        physics step is still running.
+        """
+        message = json.dumps({"type": "state", **fields})
+        with self._lock:
+            clients = list(self._clients)
+        if not clients:
+            return
+        loop = self._ioloop or IOLoop.current()
+        def _flush():
+            for client in clients:
+                try:
+                    client.write_message(message)
+                except Exception:
+                    pass
+        try:
+            loop.add_callback(_flush)
         except Exception:
             pass
 
@@ -170,26 +204,24 @@ class WebGLServer:
     # ------------------------------------------------------------------
 
     def broadcast_frame(self, payload: FramePayload) -> None:
-        """Serialize and broadcast a frame to every connected client."""
+        """Serialize and cache the latest frame; the IOLoop flushes it."""
         message = payload.encode()
         with self._lock:
             self._latest_frame = message
             clients = list(self._clients)
-
-        # If no clients are connected, avoid the cost of serialization
-        # and further downstream IOLoop work.
         if not clients:
             return
-
-        for client in clients:
-            try:
-                client.write_message(message)
-            except Exception:
-                pass
-
-        # Keep the latest frame for new connections.
-        with self._lock:
-            self._latest_frame = payload.encode()
+        loop = self._ioloop or IOLoop.current()
+        def _flush():
+            for client in clients:
+                try:
+                    client.write_message(message)
+                except Exception:
+                    pass
+        try:
+            loop.add_callback(_flush)
+        except Exception:
+            pass
 
     def set_latest_frame(self, payload: FramePayload) -> None:
         """Cache the latest frame for newly connecting clients."""
@@ -208,114 +240,24 @@ class WebGLServer:
         """Apply a control command to the attached VoxSym instance."""
         vs = self.voxsym
         try:
+            # Fast path for play/pause/stop: they only touch threading.Event
+            # flags and can be applied immediately with no blocking.
             if cmd.cmd == "play":
                 vs.play()
                 self._reply(client, "success", "Playing")
+                # Push the new play state immediately so the UI flips even if
+                # the simulation thread is in the middle of a long step.
+                self.broadcast_state_patch(playing=True)
             elif cmd.cmd == "pause":
                 vs.pause()
                 self._reply(client, "success", "Paused")
+                self.broadcast_state_patch(playing=False)
             elif cmd.cmd == "stop":
                 vs.stop()
                 self._reply(client, "success", "Stopped")
-            elif cmd.cmd == "reset":
-                vs.reset_to_initial()
-                vs.reset_simulation()
-            elif cmd.cmd == "restart":
-                vs.stop()
-                vs.reset_to_initial()
-                vs.reset_simulation()
-                vs.play()
-            elif cmd.cmd == "record":
-                recorder = getattr(vs, "_recorder", None)
-                if recorder is not None:
-                    recorder.toggle_recording()
-            elif cmd.cmd == "load_simulation_data":
-                # Future: load external data file into current simulation
-                logging.info("load_simulation_data requested: %s", cmd.filename)
-            elif cmd.cmd == "load_simulation":
-                # Future: load saved checkpoint/playback file
-                logging.info("load_simulation requested: %s", cmd.filename)
-            elif cmd.cmd == "set_layer":
-                if cmd.layer is not None and cmd.active is not None:
-                    vs.set_layer(cmd.layer, cmd.active)
-                    # Ensure EM fields are populated before rendering vector overlays,
-                    # otherwise arrows won't appear in static or paused simulations.
-                    if cmd.active and cmd.layer in ("electric_field", "magnetic_field", "current"):
-                        try:
-                            vs.apply_em_fields(t=vs.elapsed_time)
-                        except Exception:
-                            pass
-                    # Re-render immediately so layer changes reflect without waiting for a sim step.
-                    if vs._backend_name == "webgl":
-                        viz = getattr(vs, "_visualizer", None)
-                        if viz is not None:
-                            viz.request_render()
-                        else:
-                            vs.render()
-            elif cmd.cmd == "set_opacity":
-                if cmd.value is not None:
-                    backend = getattr(vs, "_webgl_backend", None)
-                    if backend is not None and hasattr(backend, "set_opacity"):
-                        backend.set_opacity(float(cmd.value))
-                    if vs._gui is not None:
-                        vs._gui._opacity_value = float(cmd.value)
-                    # Re-render immediately so opacity changes reflect without waiting for a sim step.
-                    if vs._backend_name == "webgl":
-                        viz = getattr(vs, "_visualizer", None)
-                        if viz is not None:
-                            viz.request_render()
-                        else:
-                            vs.render()
-            elif cmd.cmd == "set_cross_section":
-                viz = getattr(vs, "_visualizer", None)
-                if viz is not None and cmd.axis is not None:
-                    viz.cross_section_axis = None if cmd.axis == "off" else cmd.axis
-                    if cmd.pos is not None:
-                        viz.cross_section_pos = float(cmd.pos)
-                    # Re-render immediately so the slice is visible without waiting for the next sim step.
-                    if vs._backend_name == "webgl":
-                        viz.request_render()
-            elif cmd.cmd == "set_arrow_scale":
-                viz = getattr(vs, "_visualizer", None)
-                if viz is not None and cmd.value is not None:
-                    viz.field_arrow_scale = float(cmd.value)
-                    # Re-render immediately so arrow scale changes reflect.
-                    if vs._backend_name == "webgl":
-                        viz.request_render()
-            elif cmd.cmd == "set_time_scale":
-                if cmd.value is not None and cmd.value > 0:
-                    vs.set_steps_per_frame(int(cmd.value))
-                    self._reply(client, "success", f"Steps/frame set to {int(cmd.value)}")
-            elif cmd.cmd == "set_time_step":
-                if cmd.value is not None and cmd.value > 0:
-                    vs.set_time_step(float(cmd.value))
-                    self._reply(client, "success", f"Time step set to {float(cmd.value):.2e} s")
-            elif cmd.cmd == "single_step":
-                vs.single_step()
-                self._reply(client, "success", "Advanced one step")
-            elif cmd.cmd == "reset_time":
-                vs.reset_time()
-                self._reply(client, "success", "Simulation time reset")
+                self.broadcast_state_patch(playing=False)
             elif cmd.cmd == "get_config":
                 client.write_message(json.dumps({"type": "config", **vs.get_config()}))
-            elif cmd.cmd == "set_poisson":
-                vs.set_enable_poisson(bool(cmd.active))
-                self._reply(client, "success", f"Poisson {'on' if cmd.active else 'off'}")
-            elif cmd.cmd == "set_heat":
-                if cmd.active:
-                    vs.enable_heat()
-                else:
-                    vs.disable_heat()
-                self._reply(client, "success", f"Heat {'on' if cmd.active else 'off'}")
-            elif cmd.cmd == "set_electroneutrality":
-                vs.set_electroneutrality(bool(cmd.active))
-                self._reply(client, "success", f"Electroneutrality {'on' if cmd.active else 'off'}")
-            elif cmd.cmd == "set_butler_volmer":
-                vs.set_enable_butler_volmer(bool(cmd.active))
-                self._reply(client, "success", f"Butler–Volmer {'on' if cmd.active else 'off'}")
-            elif cmd.cmd == "set_double_layer":
-                vs.set_enable_double_layer(bool(cmd.active))
-                self._reply(client, "success", f"Double-layer {'on' if cmd.active else 'off'}")
             elif cmd.cmd == "inspect_voxel":
                 try:
                     data = self._inspect_voxel(int(cmd.voxel_id))
@@ -323,21 +265,24 @@ class WebGLServer:
                 except Exception as exc:
                     logging.warning("inspect_voxel failed: %s", exc)
                     self._reply(client, "error", f"Inspect voxel failed: {exc}")
-            elif cmd.cmd == "set_camera":
-                # Camera is handled client-side; this hook allows future server-side overrides.
-                pass
-            elif cmd.cmd == "seek":
-                # Playback seek — player handles this directly.
-                player = getattr(vs, "_player", None)
-                if player is not None and cmd.frame is not None:
-                    player.goto_frame(int(cmd.frame))
-            elif cmd.cmd == "playback":
-                # Upload-based playback requested.
-                player = getattr(vs, "_player", None)
-                if player is not None:
-                    player.play()
+            else:
+                # Everything else is scheduled on the simulation thread so the
+                # WebSocket IOLoop never blocks on physics/rendering work.
+                payload = {k: v for k, v in vars(cmd).items() if v is not None and k != "cmd"}
+                vs.schedule_command(cmd.cmd, **payload)
+                # Provide immediate feedback for commands that previously had a toast.
+                if cmd.cmd == "reset":
+                    self._reply(client, "success", "Simulation reset")
+                elif cmd.cmd == "single_step":
+                    self._reply(client, "success", "Advanced one step")
+                elif cmd.cmd == "restart":
+                    self._reply(client, "success", "Restarted")
         except Exception as exc:
             logging.warning("Error handling command %r: %s", cmd.cmd, exc)
+
+    # ------------------------------------------------------------------
+    # Command handling (legacy synchronous helpers kept for tests / scripts)
+    # ------------------------------------------------------------------
 
     # ------------------------------------------------------------------
     # Server lifecycle

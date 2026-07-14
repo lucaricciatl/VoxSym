@@ -39,6 +39,8 @@ class WebGLBackend(RenderBackend):
         self._arrow_points = np.zeros((0, 6), dtype=np.float32)
         self._arrow_colors = np.zeros((0, 3), dtype=np.uint8)
         self._arrow_directions = np.zeros((0, 3), dtype=np.float32)
+        self._arrow_strengths = np.zeros(0, dtype=np.float32)
+        self._arrow_scale = 1.0
 
     # RenderBackend API
     # ------------------------------------------------------------------
@@ -99,7 +101,7 @@ class WebGLBackend(RenderBackend):
     def set_opacity(self, value: float):
         self._opacity = float(value)
 
-    def add_arrows(self, points, colors, shaft_radius, head_radius, head_length, direction=None):
+    def add_arrows(self, points, colors, shaft_radius, head_radius, head_length, direction=None, strengths=None):
         """Append arrow data so active vector layers are merged in one frame."""
         # Accept either (n,6) tail-head arrays or (n,2,3) voxel-style arrays.
         points = np.asarray(points, dtype=np.float32).reshape(-1, 6)
@@ -109,11 +111,19 @@ class WebGLBackend(RenderBackend):
         else:
             n = points.shape[0]
             directions = np.zeros((n, 3), dtype=np.float32)
+        if strengths is not None:
+            strengths_arr = np.asarray(strengths, dtype=np.float32).reshape(-1)
+        else:
+            strengths_arr = np.ones(points.shape[0], dtype=np.float32)
 
         # Concatenate with any arrows already stored this frame.
         self._arrow_points = np.concatenate([self._arrow_points.reshape(-1, 6), points], axis=0)
         self._arrow_colors = np.concatenate([self._arrow_colors.reshape(-1, 3), colors], axis=0)
         self._arrow_directions = np.concatenate([self._arrow_directions.reshape(-1, 3), directions], axis=0)
+        if self._arrow_strengths.size == 0:
+            self._arrow_strengths = strengths_arr
+        else:
+            self._arrow_strengths = np.concatenate([self._arrow_strengths.reshape(-1), strengths_arr], axis=0)
 
         # Use the largest geometry parameters across layers for visibility.
         self._arrow_shaft_radius = max(getattr(self, "_arrow_shaft_radius", 0.04), float(shaft_radius))
@@ -125,6 +135,7 @@ class WebGLBackend(RenderBackend):
         self._arrow_points = np.zeros((0, 6), dtype=np.float32)
         self._arrow_colors = np.zeros((0, 3), dtype=np.uint8)
         self._arrow_directions = np.zeros((0, 3), dtype=np.float32)
+        self._arrow_strengths = np.zeros(0, dtype=np.float32)
         self._arrow_shaft_radius = 0.04
         self._arrow_head_radius = 0.08
         self._arrow_head_length = 0.12
@@ -132,7 +143,7 @@ class WebGLBackend(RenderBackend):
     def _build_arrows(self) -> Dict[str, Any]:
         points = getattr(self, "_arrow_points", None)
         if points is None or points.size == 0:
-            return {"count": 0, "points": [], "colors": [], "directions": [], "base_size": 1.0}
+            return {"count": 0, "points": [], "colors": [], "directions": [], "strengths": [], "base_size": 1.0, "arrow_scale": getattr(self, "_arrow_scale", 1.0)}
         n = points.shape[0]
         base_size = 1.0
         if self.voxsym.voxels:
@@ -146,16 +157,22 @@ class WebGLBackend(RenderBackend):
         directions = getattr(self, "_arrow_directions", None)
         if directions is None or directions.size == 0:
             directions = np.zeros((n, 3), dtype=np.float32)
+        strengths = getattr(self, "_arrow_strengths", None)
+        if strengths is None or strengths.size == 0:
+            strengths = np.ones(n, dtype=np.float32)
         # Defensive: ensure all arrays are (n, *) and have the same first dimension.
         points = points[:n]
         colors = colors.reshape(-1, 3)[:n]
         directions = directions.reshape(-1, 3)[:n]
+        strengths = strengths.reshape(-1)[:n]
         return {
             "count": int(n),
             "points": points.reshape(n, 6).tolist(),
             "colors": colors.reshape(n, 3).tolist(),
             "directions": directions.reshape(n, 3).tolist(),
+            "strengths": strengths.reshape(n).tolist(),
             "base_size": base_size,
+            "arrow_scale": float(getattr(self, "_arrow_scale", 1.0)),
         }
 
     def clear(self):
@@ -165,6 +182,7 @@ class WebGLBackend(RenderBackend):
         self._arrow_points = np.zeros((0, 6), dtype=np.float32)
         self._arrow_colors = np.zeros((0, 3), dtype=np.uint8)
         self._arrow_directions = np.zeros((0, 3), dtype=np.float32)
+        self._arrow_strengths = np.zeros(0, dtype=np.float32)
 
     @property
     def handle(self) -> Optional[object]:
@@ -201,6 +219,7 @@ class WebGLBackend(RenderBackend):
             "ion_concentration": "plasma",
             "effective_conductivity": "viridis",
             "temperature": "plasma",
+            "charge": "inferno",
             "material": "material",
         }
         return cmap_map.get(layer, "viridis")

@@ -33,8 +33,14 @@ export class WebSocketClient {
       } else if (data.type === 'config') {
         this.store.syncConfig(data);
       } else if (data.type === 'toast') {
-        console.log('WS toast', data);
-        this.store.addToast(data);
+        console.log('[WS] toast', data); this.store.addToast(data);
+      } else if (data.type === 'state') {
+        // Authoritative real-time state update from the server; apply
+        // immediately so the UI never flips back due to stale frames.
+        if (data.playing !== undefined) {
+          console.log('[WS] state', data.playing);
+          this.store.setPlaying(data.playing);
+        }
       } else if (this.onFrame) {
         this.onFrame(data);
       }
