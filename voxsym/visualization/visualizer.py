@@ -446,7 +446,7 @@ class Visualizer:
             center = np.array(
                 [voxel.x * scl, voxel.y * scl, voxel.z * scl], dtype=float
             )
-            offset = 0.5 * length * direction
+            offset = 0.4 * length * direction
             points[i, 0] = center - offset  # tail
             points[i, 1] = center + offset  # head
 
