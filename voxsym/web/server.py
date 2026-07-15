@@ -170,7 +170,14 @@ class WebGLServer:
         """Send a lightweight, deduplicated state update to every client."""
         if not fields:
             return
-        key = tuple(sorted(fields.items()))
+        # Normalize unhashable values (lists/sets/dicts) for deduplication.
+        def _norm(value):
+            if isinstance(value, (list, tuple, set)):
+                return tuple(_norm(v) for v in value)
+            if isinstance(value, dict):
+                return tuple(sorted(((k, _norm(v)) for k, v in value.items())))
+            return value
+        key = tuple(sorted(((k, _norm(v)) for k, v in fields.items())))
         if getattr(self, "_last_state_patch", None) == key:
             return
         self._last_state_patch = key
@@ -260,6 +267,13 @@ class WebGLServer:
                 except Exception as exc:
                     logging.warning("inspect_voxel failed: %s", exc)
                     self._reply(client, "error", f"Inspect voxel failed: {exc}")
+            elif cmd.cmd == "set_layer":
+                payload = {k: v for k, v in vars(cmd).items() if v is not None and k != "cmd"}
+                vs.schedule_command(cmd.cmd, **payload)
+                self.broadcast_state_patch(
+                    active_layers=sorted(vs._active_layers_for_patch()),
+                    scalar_layer=vs._scalar_layer_for_patch(),
+                )
             else:
                 # Everything else is scheduled on the simulation thread so the
                 # WebSocket IOLoop never blocks on physics/rendering work.

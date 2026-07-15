@@ -38,7 +38,7 @@ The WebGL server binds to `0.0.0.0` by default so the viewer is reachable from n
 
 ## JSON wire protocol
 
-The WebGL backend communicates with the browser through text JSON frames.
+The WebGL backend communicates with the browser through text JSON frames. The payload is optimized so only changed data is sent each frame.
 
 ### Server → client: `FramePayload`
 
@@ -68,6 +68,24 @@ Defined in `voxsym/web/protocol.py`:
 
 Voxel arrays are flattened so the JavaScript front end can upload them directly into a `THREE.InstancedMesh`. The browser camera is automatically framed around the incoming voxel bounding box.
 
+### Payload deduplication
+
+The WebGL backend keeps the previous broadcast payload and omits metadata fields that have not changed:
+
+- `active_layers`
+- active scalar layer and `scalar_range`
+- `colormap`
+
+The client merges incoming frames onto `lastFrame`, so missing fields keep their previous values. This reduces per-frame JSON size, especially when only voxel positions/colors change.
+
+### Adaptive throttling
+
+`VoxSym.target_fps` (default `60`) controls the render loop while playing. The simulation loop measures elapsed time per iteration and sleeps for the remainder of the target frame interval, with a small minimum sleep. While paused the target drops to 10 fps to reduce idle CPU/GPU usage. The visualizer throttle is aligned with the same target.
+
+### EM-field period
+
+Poisson and EM field updates are expensive. `VoxSym` exposes `set_em_field_period(n)` so fields are only recomputed every `n` sub-steps. The default is `steps_per_frame`, meaning one EM solve per rendered frame. This is the single biggest lever for large or multi-sub-step simulations.
+
 The `arrows.points` array is ordered tail→head for every arrow so the client can reconstruct an oriented shaft + cone glyph without guessing direction. Each arrow also carries a `base_size` value when the payload is built:
 
 ```json
@@ -82,6 +100,10 @@ The `arrows.points` array is ordered tail→head for every arrow so the client c
 ```
 
 `base_size` is the rendered size of one voxel. The arrow renderer uses it to clamp the arrow length to a visible range and to offset the arrow so it sits just outside the source voxel instead of being buried inside.
+
+### GPU-friendly frontend defaults
+
+The Three.js frontend reuses `InstancedMesh` geometry when voxel/arrow counts stay the same, only updating per-instance matrices and colors. Arrow meshes are reused instead of rebuilt every frame; when the count changes the group is recreated. Shadows are off by default for grids above ~1 k voxels and can be toggled from the display panel.
 
 ### Client → server: `CommandPayload`
 

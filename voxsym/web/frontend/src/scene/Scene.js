@@ -55,12 +55,14 @@ export class Scene {
     this.controls.maxPolarAngle = Math.PI;
 
     this.scene.add(new THREE.AmbientLight(0xffffff, 0.6));
-    const dir = new THREE.DirectionalLight(0xffffff, 0.8);
-    dir.position.set(10, 20, 10);
-    this.scene.add(dir);
+    this._dirLight = new THREE.DirectionalLight(0xffffff, 0.8);
+    this._dirLight.position.set(10, 20, 10);
+    this._dirLight.castShadow = true;
+    this.scene.add(this._dirLight);
 
     this.voxelMesh = null;
     this.arrowRoot = null;
+    this.shadowEnabled = true;
 
     this._isOrtho = false;
     this._defaultCam = {
@@ -132,6 +134,7 @@ export class Scene {
   onResize() {
     const w = this.container.clientWidth;
     const h = this.container.clientHeight;
+    if (w === 0 || h === 0) return;
     const aspect = w / h;
     if (this.camera.isOrthographicCamera) {
       const size = 16;
@@ -155,13 +158,43 @@ export class Scene {
   setVoxelMesh(mesh) {
     if (this.voxelMesh) this.scene.remove(this.voxelMesh);
     this.voxelMesh = mesh;
-    if (mesh) this.scene.add(mesh);
+    if (mesh) {
+      this.scene.add(mesh);
+      this._applyShadowToMesh(mesh);
+    }
   }
 
   setArrowRoot(root) {
     if (this.arrowRoot) this.scene.remove(this.arrowRoot);
     this.arrowRoot = root;
     if (root) this.scene.add(root);
+  }
+
+  setShadowEnabled(value) {
+    const v = Boolean(value);
+    if (this.shadowEnabled === v) return;
+    this.shadowEnabled = v;
+    this.renderer.shadowMap.enabled = v;
+    this._dirLight.castShadow = v;
+    if (this.voxelMesh) this._applyShadowToMesh(this.voxelMesh);
+    if (this.arrowRoot) {
+      const shaft = this.arrowRoot.userData?.shaftMesh;
+      const head = this.arrowRoot.userData?.headMesh;
+      if (shaft) {
+        shaft.castShadow = v;
+        shaft.receiveShadow = v;
+      }
+      if (head) {
+        head.castShadow = v;
+        head.receiveShadow = v;
+      }
+    }
+  }
+
+  _applyShadowToMesh(mesh) {
+    if (!mesh) return;
+    mesh.castShadow = this.shadowEnabled;
+    mesh.receiveShadow = this.shadowEnabled;
   }
 
   showGrid(visible) {

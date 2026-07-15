@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from dataclasses import asdict, dataclass, field
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set
 
 
 @dataclass
@@ -23,6 +23,7 @@ class FramePayload:
     scalar_range: List[float] = field(default_factory=lambda: [0.0, 1.0])
     colormap: str = "viridis"
     scalar_values: List[float] = field(default_factory=list)
+    exclude: Set[str] = field(default_factory=set, repr=False)
 
     @classmethod
     def empty(cls, time: float = 0.0) -> "FramePayload":
@@ -38,8 +39,16 @@ class FramePayload:
         )
 
     def encode(self) -> str:
-        """Serialize to a JSON string suitable for WebSocket text frames."""
-        return json.dumps(asdict(self))
+        """Serialize to a JSON string suitable for WebSocket text frames.
+
+        Fields listed in ``exclude`` are skipped so unchanged metadata is
+        not resent every frame; the client keeps the previous value.
+        """
+        d = asdict(self)
+        d.pop("exclude", None)
+        for key in self.exclude:
+            d.pop(key, None)
+        return json.dumps(d)
 
     @classmethod
     def decode(cls, data: str) -> "FramePayload":
@@ -53,6 +62,10 @@ class FramePayload:
             voxels=obj.get("voxels", {}),
             arrows=obj.get("arrows", {}),
             active_layers=obj.get("active_layers", ["voxel_color"]),
+            scalar_layer=obj.get("scalar_layer", "material"),
+            scalar_range=obj.get("scalar_range", [0.0, 1.0]),
+            colormap=obj.get("colormap", "viridis"),
+            scalar_values=obj.get("scalar_values", []),
         )
 
 
@@ -67,6 +80,8 @@ class CommandPayload:
         set_cross_section {axis, pos}
         set_arrow_scale {value}
         set_time_scale {value}
+        set_time_step {value}
+        set_em_field_period {value}
         set_poisson {active}
         set_heat {active}
         set_electroneutrality {active}

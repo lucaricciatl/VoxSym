@@ -36,6 +36,9 @@ class Visualizer:
         server,
         voxsym,
         renderer: Renderer,
+        *,
+        target_fps: float = 60.0,
+        paused_fps: float = 10.0,
     ):
         self.server = server
         self.voxsym = voxsym
@@ -64,6 +67,12 @@ class Visualizer:
         self._scalar_range: Dict[str, Tuple[float, float]] = {}
         self._scalar_values: Dict[str, List[float]] = {}
         self._active_scalar: str = Layer.MATERIAL
+
+        # Adaptive render throttling.  The visualizer gate is aligned with the
+        # same target used by the simulation loop.
+        self.target_fps = float(target_fps)
+        self.paused_fps = float(paused_fps)
+        self._last_render_time: float = 0.0
 
     # ------------------------------------------------------------------
     # Public API
@@ -190,15 +199,15 @@ class Visualizer:
         """
         import time
         now = time.perf_counter()
-        target = getattr(self, "_target_frame_interval", 1.0 / 30.0)
-        last = getattr(self, "_last_render_time", 0.0)
-        if now - last < target:
+        target_fps = self.paused_fps if getattr(self.voxsym, "simulation_paused", False) else self.target_fps
+        target = 1.0 / float(target_fps) if target_fps > 0 else 1.0 / 60.0
+        if now - self._last_render_time < target:
             return True
         self._last_render_time = now
         return False
 
     def request_render(self):
-        """Schedule a frame render + broadcast, skipping only the throttle gate."""
+        """Schedule a frame render + broadcast, respecting the throttle gate."""
         if not self.maybe_skip_frame():
             self.render()
 

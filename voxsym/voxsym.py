@@ -159,7 +159,10 @@ class VoxSym:
         # Number of simulation sub-steps per rendered frame
         self._steps_per_frame = 1
         # Only recompute EM fields every _em_field_period sub-steps.
-        self._em_field_period = 1
+        # Default to steps_per_frame so expensive Poisson/current solves run
+        # once per rendered frame unless the user explicitly overrides it.
+        self._em_field_period = self._steps_per_frame
+        self._em_field_period_explicit = False
         self._em_field_counter = 0
 
         # Playback state (loaded simulations replay in the main window)
@@ -306,28 +309,30 @@ class VoxSym:
 
     def _cmd_play(self):
         self.play()
-        self._broadcast_state_patch()
+        self._broadcast_state_patch(playing=bool(self.is_playing()))
 
     def _cmd_pause(self):
         self.pause()
-        self._broadcast_state_patch()
+        self._broadcast_state_patch(playing=bool(self.is_playing()))
 
     def _cmd_stop(self):
         self.stop()
-        self._broadcast_state_patch()
+        self._broadcast_state_patch(playing=False)
 
     def _cmd_restart(self):
         self.stop()
         self.reset_to_initial()
         self.reset_simulation()
         self.play()
-        self._broadcast_state_patch()
+        self._broadcast_state_patch(playing=bool(self.is_playing()))
 
     def _cmd_reset(self):
         self.reset_to_initial()
         self.reset_simulation()
         # Force a render so the client sees t=0 immediately.
         self.render()
+        self._process_commands()
+        self._broadcast_state_patch(playing=bool(self.is_playing()), time=float(self.time))
         if self._webgl_server is not None:
             try:
                 self._webgl_server.broadcast_config()
@@ -357,22 +362,23 @@ class VoxSym:
             except Exception as exc:
                 print(f"[on_gui_update] {exc}")
         self.render()
+        self._process_commands()
         if was_paused:
             self._simulation_paused.set()
-
-    def _broadcast_state_patch(self):
-        """Push current play/pause state to clients without a full render."""
-        server = getattr(self, "_webgl_server", None)
-        if server is not None:
-            try:
-                server.broadcast_state_patch(playing=bool(self.is_playing()))
-            except Exception:
-                pass
 
     def _cmd_record(self):
         recorder = getattr(self, "_recorder", None)
         if recorder is not None:
             recorder.toggle_recording()
+
+    def _broadcast_state_patch(self, **fields) -> None:
+        """Push a lightweight state patch to clients without a full render."""
+        server = getattr(self, "_webgl_server", None)
+        if server is not None:
+            try:
+                server.broadcast_state_patch(**fields)
+            except Exception:
+                pass
 
     def _cmd_set_layer(self, layer: str, active: bool) -> None:
         self.set_layer(layer, active)
@@ -382,6 +388,11 @@ class VoxSym:
             except Exception:
                 pass
         self.render()
+        self._process_commands()
+        self._broadcast_state_patch(
+            active_layers=sorted(self._active_layers_for_patch()),
+            scalar_layer=self._scalar_layer_for_patch(),
+        )
 
     def _cmd_set_opacity(self, value: float) -> None:
         backend = getattr(self, "_webgl_backend", None)
@@ -390,6 +401,8 @@ class VoxSym:
         if self._gui is not None:
             self._gui._opacity_value = float(value)
         self.render()
+        self._process_commands()
+        self._broadcast_state_patch(opacity=float(value))
 
     def _cmd_set_cross_section(self, axis: Optional[str], pos: Optional[float] = None) -> None:
         viz = getattr(self, "_visualizer", None)
@@ -399,6 +412,10 @@ class VoxSym:
         if pos is not None:
             viz.cross_section_pos = float(pos)
         self.render()
+        self._process_commands()
+        self._broadcast_state_patch(
+            cross_section={"axis": axis or "off", "pos": float(pos) if pos is not None else 0.0},
+        )
 
     def _cmd_set_arrow_scale(self, value: float) -> None:
         viz = getattr(self, "_visualizer", None)
@@ -408,35 +425,74 @@ class VoxSym:
         if backend is not None:
             backend._arrow_scale = float(value)
         self.render()
+        self._process_commands()
+        self._broadcast_state_patch(arrow_scale=float(value))
 
     def _cmd_set_time_scale(self, value: int) -> None:
         if value > 0:
             self.set_steps_per_frame(int(value))
+            server = getattr(self, "_webgl_server", None)
+            if server is not None:
+                try:
+                    server.broadcast_config()
+                except Exception:
+                    pass
 
     def _cmd_set_time_step(self, value: float) -> None:
         if value > 0:
             self.set_time_step(float(value))
+            self._broadcast_state_patch(time_step=float(value))
+
+    def _cmd_set_em_field_period(self, value: int) -> None:
+        if value > 0:
+            self.set_em_field_period(int(value))
+            server = getattr(self, "_webgl_server", None)
+            if server is not None:
+                try:
+                    server.broadcast_config()
+                except Exception:
+                    pass
 
     def _cmd_reset_time(self) -> None:
         self.reset_time()
+        self.render()
+        self._process_commands()
+        self._broadcast_state_patch(time=float(self.time))
 
     def _cmd_set_poisson(self, active: bool) -> None:
         self.set_enable_poisson(bool(active))
+        self._broadcast_state_patch(poisson_enabled=bool(active))
 
     def _cmd_set_heat(self, active: bool) -> None:
         if active:
             self.enable_heat()
         else:
             self.disable_heat()
+        self._broadcast_state_patch(heat_enabled=bool(active))
 
     def _cmd_set_electroneutrality(self, active: bool) -> None:
         self.set_electroneutrality(bool(active))
+        self._broadcast_state_patch(electroneutrality_enabled=bool(active))
 
     def _cmd_set_butler_volmer(self, active: bool) -> None:
         self.set_enable_butler_volmer(bool(active))
+        self._broadcast_state_patch(butler_volmer_enabled=bool(active))
 
     def _cmd_set_double_layer(self, active: bool) -> None:
         self.set_enable_double_layer(bool(active))
+        self._broadcast_state_patch(double_layer_enabled=bool(active))
+
+    def _active_layers_for_patch(self) -> List[str]:
+        visualizer = getattr(self, "_visualizer", None)
+        if visualizer is None:
+            return ["voxel_color"]
+        return sorted(getattr(visualizer, "_active", {"voxel_color"}))
+
+    def _scalar_layer_for_patch(self) -> str:
+        visualizer = getattr(self, "_visualizer", None)
+        if visualizer is None:
+            return "material"
+        return getattr(visualizer, "_active_scalar", "material")
 
     def _cmd_load_simulation_data(self, filename: str) -> None:
         import logging
@@ -578,6 +634,8 @@ class VoxSym:
 
     def _simulation_loop(self, dt: Optional[float], sleep: float) -> None:
         """Simulation main loop — runs on its own thread."""
+        import logging
+        _logger = logging.getLogger("voxsym.timing")
         try:
             while self._simulation_running:
                 self._process_commands()
@@ -619,13 +677,26 @@ class VoxSym:
                             except Exception as exc:
                                 print(f"[on_gui_update] {exc}")
 
+                _t0 = time.perf_counter()
                 self.render()
+                _render = time.perf_counter() - _t0
+                # Drain commands again after render so UI changes that arrive
+                # during the render pipeline are handled before sleep.
+                self._process_commands()
                 # Throttle render/broadcast while paused to avoid flooding
                 # clients with identical frames and to reduce stale-frame races.
+                _t0 = time.perf_counter()
                 if self._simulation_paused.is_set():
-                    time.sleep(max(sleep, 0.1))
+                    _sleep_dur = max(sleep, 0.1)
                 else:
-                    time.sleep(sleep)
+                    _sleep_dur = sleep
+                time.sleep(_sleep_dur)
+                _sleep = time.perf_counter() - _t0
+                if int(self._frame_index) % 60 == 0:
+                    print(
+                        f"frame={self._frame_index} render={_render * 1e3:.3f}ms sleep={_sleep * 1e3:.3f}ms",
+                        flush=True,
+                    )
         except KeyboardInterrupt:
             print("\nStopping...")
         finally:
@@ -1910,8 +1981,15 @@ class VoxSym:
         The default is 1.  Increase this when the simulation time-step is
         much smaller than the display frame rate (e.g. 100 sub-steps of
         1µs per frame).
+
+        The EM-field update period defaults to ``steps_per_frame`` so
+        expensive Poisson/current solves run once per rendered frame.
+        If the user has explicitly set ``em_field_period``, that value
+        is kept instead.
         """
         self._steps_per_frame = max(1, int(n))
+        if not self._em_field_period_explicit:
+            self._em_field_period = self._steps_per_frame
 
     def set_em_field_period(self, n: int):
         """Recompute EM fields only once every *n* sub-steps (default 1).
@@ -1923,6 +2001,7 @@ class VoxSym:
         frame.
         """
         self._em_field_period = max(1, int(n))
+        self._em_field_period_explicit = True
 
     def get_em_field_period(self) -> int:
         """Return the current EM-field update period."""
@@ -1951,9 +2030,12 @@ class VoxSym:
     def get_config(self):
         """JSON-safe current simulation configuration."""
         viz = getattr(self, "_visualizer", None)
+        active_layers = getattr(viz, "_active", None)
+        active_scalar = getattr(viz, "_active_scalar", "material")
         return {
             "time_step": float(getattr(self, "dt", 1e-3)),
             "steps_per_frame": int(getattr(self, "_steps_per_frame", 1)),
+            "em_field_period": int(getattr(self, "_em_field_period", 1)),
             "time": float(getattr(self, "time", 0.0)),
             "playing": bool(self.is_playing()),
             "poisson_enabled": bool(getattr(self, "_enable_poisson", False)),
@@ -1962,6 +2044,8 @@ class VoxSym:
             "butler_volmer_enabled": bool(getattr(self, "_enable_butler_volmer", False)),
             "double_layer_enabled": bool(getattr(self, "_enable_double_layer", False)),
             "arrow_scale": float(getattr(viz, "field_arrow_scale", 1.2)),
+            "active_layers": sorted(active_layers) if active_layers else ["material"],
+            "active_scalar": str(active_scalar),
         }
 
     def add_voxel(self, voxel):

@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any, Dict, List, Optional
 
 import numpy as np
+import time
 
 from voxsym.visualization.backends.base import RenderBackend
 from voxsym.web.protocol import FramePayload
@@ -82,7 +83,9 @@ class WebGLBackend(RenderBackend):
             )
 
         self._latest_payload = payload
+        _t0 = time.perf_counter()
         self._latest_frame = payload.encode()
+        _serialize = time.perf_counter() - _t0
         if self.server is not None:
             self.server.set_latest_frame(payload)
             # Skip broadcasting empty keep-alive frames when paused.
@@ -91,6 +94,11 @@ class WebGLBackend(RenderBackend):
                 or getattr(payload, "arrows", {}).get("count", 0) > 0
             ):
                 self.server.broadcast_frame(payload)
+        if int(self.voxsym.frame_index) % 60 == 0:
+            print(
+                f"serialize={_serialize * 1e3:.3f}ms voxels={int(n)} arrows={getattr(payload, 'arrows', {}).get('count', 0)}",
+                flush=True,
+            )
 
     def get_latest_payload(self) -> FramePayload:
         return self._latest_payload

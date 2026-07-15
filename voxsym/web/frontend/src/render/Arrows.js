@@ -8,22 +8,7 @@ const _tip = new THREE.Vector3();
 const _dir = new THREE.Vector3();
 const _quat = new THREE.Quaternion();
 
-export function updateArrows(scene, arrows) {
-  if (!arrows || arrows.count <= 0 || !Array.isArray(arrows.points) || arrows.points.length < 6) {
-    scene.setArrowRoot(null);
-    return 0;
-  }
-
-  const count = arrows.count;
-  const points = arrows.points.flat ? arrows.points.flat() : arrows.points;
-  const colors = (arrows.colors || []).flat ? (arrows.colors || []).flat() : (arrows.colors || []);
-  const strengths = arrows.strengths && arrows.strengths.length ?
-    (arrows.strengths.flat ? arrows.strengths.flat() : arrows.strengths) :
-    null;
-  const baseSize = Number(arrows.base_size ?? 1.0);
-  const arrowScale = Number(arrows.arrow_scale ?? 1.0);
-
-  const root = new THREE.Group();
+function makeArrowMeshes(count, shadowEnabled) {
   const material = new THREE.MeshBasicMaterial({
     color: 0xffffff,
     transparent: true,
@@ -41,20 +26,61 @@ export function updateArrows(scene, arrows) {
   const headMesh = new THREE.InstancedMesh(headGeo, material, count);
   shaftMesh.count = count;
   headMesh.count = count;
-  shaftMesh.castShadow = false;
-  headMesh.castShadow = false;
+  shaftMesh.castShadow = shadowEnabled;
+  headMesh.castShadow = shadowEnabled;
+  shaftMesh.receiveShadow = shadowEnabled;
+  headMesh.receiveShadow = shadowEnabled;
   shaftMesh.frustumCulled = false;
   headMesh.frustumCulled = false;
+  shaftMesh.renderOrder = 999;
+  headMesh.renderOrder = 999;
+  return { root: new THREE.Group(), shaftMesh, headMesh };
+}
+
+export function updateArrows(scene, arrows, shadowEnabled = false) {
+  if (!arrows || arrows.count <= 0 || !Array.isArray(arrows.points) || arrows.points.length < 6) {
+    scene.setArrowRoot(null);
+    return 0;
+  }
+
+  const count = arrows.count;
+  const points = arrows.points.flat ? arrows.points.flat() : arrows.points;
+  const colors = (arrows.colors || []).flat ? (arrows.colors || []).flat() : (arrows.colors || []);
+  const strengths = arrows.strengths && arrows.strengths.length ?
+    (arrows.strengths.flat ? arrows.strengths.flat() : arrows.strengths) :
+    null;
+  const baseSize = Number(arrows.base_size ?? 1.0);
+  const arrowScale = Number(arrows.arrow_scale ?? 1.0);
+
+  let root = scene.arrowRoot;
+  let shaftMesh = root?.userData?.shaftMesh;
+  let headMesh = root?.userData?.headMesh;
+
+  if (!root || !shaftMesh || !headMesh || shaftMesh.count !== count) {
+    if (root) scene.setArrowRoot(null);
+    const made = makeArrowMeshes(count, shadowEnabled);
+    root = made.root;
+    shaftMesh = made.shaftMesh;
+    headMesh = made.headMesh;
+    root.userData.shaftMesh = shaftMesh;
+    root.userData.headMesh = headMesh;
+    root.add(shaftMesh);
+    root.add(headMesh);
+    scene.setArrowRoot(root);
+  } else {
+    const cast = Boolean(shadowEnabled);
+    if (shaftMesh.castShadow !== cast || shaftMesh.receiveShadow !== cast) {
+      shaftMesh.castShadow = cast;
+      headMesh.castShadow = cast;
+      shaftMesh.receiveShadow = cast;
+      headMesh.receiveShadow = cast;
+    }
+  }
 
   const halfVoxel = 0.5 * baseSize;
   const geoHeight = 1.25;
-  // Thickness is clamped between a minimum for weak fields and a maximum
-  // for strong fields, using the per-arrow relative field strength.
   const minRadius = Math.max(0.02, baseSize * 0.04 * arrowScale);
   const maxRadius = Math.max(0.08, baseSize * 0.22 * arrowScale);
-  // Length is already encoded proportionally by the backend (and shortened
-  // there by 30%); avoid a second reduction on the client.
-  const lengthFactor = 1.0;
 
   for (let i = 0; i < count; i++) {
     const i6 = i * 6;
@@ -77,15 +103,9 @@ export function updateArrows(scene, arrows) {
       dummy.rotation.set(0, 0, 0);
     } else {
       _dir.normalize();
-      // Strength is the relative field intensity in this layer [0, 1].
       const strength = strengths ? Math.max(0, Math.min(1, strengths[i] ?? 1)) : 1.0;
       const minLen = 0.12 * baseSize * arrowScale;
-      // The backend already encodes arrow length proportionally to intensity
-      // (shortened by 30%). Keep the user arrow-scale slider active.
       const renderedLen = Math.max(minLen, len * arrowScale);
-
-      // Thickness is clamped between minRadius (weak field) and maxRadius
-      // (strong field) based on the same relative field strength.
       const radius = minRadius + (maxRadius - minRadius) * strength;
 
       const tail = _dir.clone().multiplyScalar(-halfVoxel).add(_origin);
@@ -115,17 +135,6 @@ export function updateArrows(scene, arrows) {
   headMesh.instanceMatrix.needsUpdate = true;
   if (shaftMesh.instanceColor) shaftMesh.instanceColor.needsUpdate = true;
   if (headMesh.instanceColor) headMesh.instanceColor.needsUpdate = true;
-
-  shaftMesh.renderOrder = 999;
-  headMesh.renderOrder = 999;
-
-  root.add(shaftMesh);
-  root.add(headMesh);
-  scene.setArrowRoot(root);
-
-  // Ensure arrows are rendered after voxels so they draw on top.
-  scene.scene.remove(scene.arrowRoot);
-  scene.scene.add(scene.arrowRoot);
 
   return count;
 }

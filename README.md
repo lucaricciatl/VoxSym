@@ -95,6 +95,15 @@ Layers are split into two groups:
 - **Scalar layers** — `Base color`, `Temperature`, `Ion concentration`, `Material`. Exactly one scalar layer is shown at a time; selecting a new scalar layer deactivates the previous one.
 - **Vector overlays** — `Electric field`, `Magnetic field`, `Current`. These are independent toggles and can be enabled on top of any scalar layer. Vector overlays are rendered as arrow glyphs whose orientation is computed explicitly from field tail→head data.
 
+## Performance tips
+
+- **Steps per frame** — Increase `steps_per_frame` to advance physics further between renders. The display panel exposes a slider; set it programmatically with `vs.set_steps_per_frame(n)`.
+- **EM-field period** — Electric/magnetic field solves are the biggest per-step cost. Set `vs.set_em_field_period(n)` to recompute EM fields only every `n` sub-steps. The default matches `steps_per_frame` so fields solve once per rendered frame. Lower it if rapid field transients matter.
+- **Target FPS / adaptive throttling** — Set `vs.target_fps` (default `60`) to cap frames while playing. While paused the loop throttles to 10 fps automatically to save CPU/GPU.
+- **Shadows toggle** — Shadows look nice but hurt large grids. The display panel has a toggle; default is off for grids above ~1 k voxels.
+- **Payload deduplication** — The WebGL backend caches unchanged metadata (`active_layers`, scalar layer, colormap, range) and only resends them when they change, which lowers per-frame JSON size.
+- **Headless mode** — For sweeps or CI use `backend=None` to skip the server and rendering entirely.
+
 ## Headless mode
 
 For batch jobs or automated sweeps, create `VoxSym(backend=None)` to avoid starting any server:

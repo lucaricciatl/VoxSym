@@ -27,6 +27,7 @@ export class Store {
       opacity: 1.0,
       arrowScale: 0.8,
       stepsPerFrame: 1,
+      emFieldPeriod: 1,
       timeStep: 1e-3,
       playing: false,
       recording: false,
@@ -51,6 +52,7 @@ export class Store {
       colormap: 'viridis',
       scalarValues: [],
       orthographic: false,
+      shadowEnabled: false,
       probe: null,
       toast: null,
     };
@@ -108,6 +110,13 @@ export class Store {
     this._notify({ stepsPerFrame: v });
   }
 
+  setEmFieldPeriod(value) {
+    const v = Math.max(1, parseInt(value, 10));
+    if (Number.isNaN(v) || this.state.emFieldPeriod === v) return;
+    this.state.emFieldPeriod = v;
+    this._notify({ emFieldPeriod: v });
+  }
+
   setTimeStep(value) {
     const v = parseFloat(value);
     if (Number.isNaN(v) || v <= 0 || this.state.timeStep === v) return;
@@ -144,6 +153,7 @@ export class Store {
     const map = {
       time_step: 'timeStep',
       steps_per_frame: 'stepsPerFrame',
+      em_field_period: 'emFieldPeriod',
       // Do not sync playing from config: the live frame payload already
       // carries the server's playing state, and overwriting the UI toggle
       // with a stale connect-time config causes play to immediately pause.
@@ -161,6 +171,80 @@ export class Store {
       }
     }
     if (Object.keys(patch).length) this._notify(patch);
+  }
+
+  setActiveLayersRemote(layers) {
+    const scalar = layers.find((l) => LAYERS.SCALAR.includes(l)) || 'material';
+    const vectors = new Set(layers.filter((l) => LAYERS.VECTOR.includes(l)));
+    let changed = false;
+    if (this.state.activeScalar !== scalar) {
+      this.state.activeScalar = scalar;
+      changed = true;
+    }
+    if (this.state.activeVectors.size !== vectors.size || [...vectors].some((v) => !this.state.activeVectors.has(v))) {
+      this.state.activeVectors = vectors;
+      changed = true;
+    }
+    if (changed) this._notify({ activeScalar: scalar, activeVectors: new Set(vectors), remote: true });
+  }
+
+  setActiveScalarRemote(name) {
+    this.setActiveScalar(name);
+  }
+
+  setOpacityRemote(value) {
+    const v = Math.max(0, Math.min(1, parseFloat(value)));
+    if (Number.isNaN(v) || this.state.opacity === v) return;
+    this.state.opacity = v;
+    this._notify({ opacity: v, remote: true });
+  }
+
+  setArrowScaleRemote(value) {
+    const v = parseFloat(value);
+    if (Number.isNaN(v) || this.state.arrowScale === v) return;
+    this.state.arrowScale = v;
+    this._notify({ arrowScale: v, remote: true });
+  }
+
+  setTimeStepRemote(value) {
+    const v = parseFloat(value);
+    if (Number.isNaN(v) || v <= 0 || this.state.timeStep === v) return;
+    this.state.timeStep = v;
+    this._notify({ timeStep: v, remote: true });
+  }
+
+  setStepsPerFrameRemote(value) {
+    const v = parseInt(value, 10);
+    if (Number.isNaN(v) || this.state.stepsPerFrame === v) return;
+    this.state.stepsPerFrame = v;
+    this._notify({ stepsPerFrame: v, remote: true });
+  }
+
+  setEmFieldPeriodRemote(value) {
+    const v = Math.max(1, parseInt(value, 10));
+    if (Number.isNaN(v) || this.state.emFieldPeriod === v) return;
+    this.state.emFieldPeriod = v;
+    this._notify({ emFieldPeriod: v, remote: true });
+  }
+
+  setTimeRemote(value) {
+    const v = parseFloat(value);
+    if (Number.isNaN(v) || this.state.time === v) return;
+    this.state.time = v;
+    this._notify({ time: v, remote: true });
+  }
+
+  setCrossSectionRemote(axis, pos) {
+    const v = { axis, pos: parseFloat(pos) || 0 };
+    if (this.state.crossSection.axis === v.axis && this.state.crossSection.pos === v.pos) return;
+    this.state.crossSection = v;
+    this._notify({ crossSection: v, remote: true });
+  }
+
+  setSimSettingRemote(key, value) {
+    if (this.state[key] === value) return;
+    this.state[key] = value;
+    this._notify({ [key]: value, remote: true });
   }
 
   setHoveredVoxel(data) {
@@ -210,6 +294,14 @@ export class Store {
     this._notify({ orthographic: value });
   }
 
+  setShadowEnabled(value) {
+    const v = Boolean(value);
+    if (this.state.shadowEnabled === v) return;
+    this._userTouchedShadow = true;
+    this.state.shadowEnabled = v;
+    this._notify({ shadowEnabled: v });
+  }
+
   setProbe(data) {
     const same = this.state.probe && data && this.state.probe.id === data.id;
     if (same) return;
@@ -227,8 +319,14 @@ export class Store {
   }
 
   setFrameMeta({ time, frame, voxelCount, arrowCount }) {
+    const firstFrame = this.state.frame === 0 && frame > 0;
     Object.assign(this.state, { time, frame, voxelCount, arrowCount });
     this._notify({ time, frame, voxelCount, arrowCount });
+    // Default shadows off for large grids to stay GPU-friendly.
+    if (firstFrame && voxelCount > 1000 && !this._userTouchedShadow) {
+      this.state.shadowEnabled = false;
+      this._notify({ shadowEnabled: false });
+    }
   }
 
   setScalarMeta({ scalarRange, colormap, scalarValues }) {

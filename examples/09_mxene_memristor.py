@@ -193,9 +193,10 @@ def build_memristor(backend="webgl", port=9000, host="0.0.0.0"):
                 v.anion_concentration = 300.0  # electroneutral salt
                 vs.add_voxel(v)
 
-    # No seed charges: the only potential sources are the fixed electrode
-    # potentials and the charge that develops from ion transport.
-    # _set_interface_charges(vs, size)
+    # Seed a small static double-layer charge at the metal/electrolyte
+    # interfaces so the charge scalar layer and E-field are visible
+    # immediately, even before ions have time to migrate.
+    _set_interface_charges(vs, size)
 
     return vs
 
@@ -205,12 +206,16 @@ def _set_interface_charges(vs, size: float = 1e-5):
 
     The left gold pad (x < 2*size) carries a positive surface charge and
     the adjacent electrolyte a negative counter-charge; the right pad is
-    negative with positive counter-charge.  This makes the Poisson field
-    and the charge-density scalar layer visible immediately, even before
-    ions have time to migrate.
+    negative with positive counter-charge.  Values are kept in the
+    nanocoulomb-per-voxel range so the Poisson solve and migration CFL stay
+    stable for real-time preview.
     """
     interface_depth = 1.5 * size
-    q_surface = 1e-15  # C per voxel; produces ~kV/m E-field, visible but stable at 1 ms steps
+    # 2026-07-13/14 lesson: keep q in the 1e-13–1e-12 C/voxel range. Larger
+    # values produce E-fields that collapse the migration CFL to nanoseconds
+    # and eventually overflow arrow colors into NaN.
+    q_surface = 1e-13  # C per voxel (≈ mC/m² surface charge)
+    q_counter = -q_surface
     for v in vs.get_voxels():
         if v.material is GOLD:
             if v.x < 2 * size:
@@ -219,12 +224,12 @@ def _set_interface_charges(vs, size: float = 1e-5):
                 v.charge = -q_surface
         elif v.material is H2SO4_ELECTROLYTE:
             if abs(v.x - 2 * size) <= interface_depth:
-                v.charge = -q_surface
+                v.charge = q_counter
             elif abs(v.x - (GRID_X - 1) * size) <= interface_depth:
-                v.charge = q_surface
+                v.charge = -q_counter
         elif v.material is TI3C2_MXENE:
             if abs(v.x - (GRID_X - 1) * size) <= interface_depth:
-                v.charge = q_surface
+                v.charge = -q_counter
 
 
 # ---------------------------------------------------------------------------
@@ -282,11 +287,9 @@ if __name__ == "__main__":
     # and concentration-dependent MXene conductivity.
 
     vs.setup_gui()
-    vs.set_layer(VoxSym.LAYER_ELECTRIC_FIELD, True)
-    vs.set_layer(VoxSym.LAYER_CURRENT, True)
     vs.set_layer(VoxSym.LAYER_ION_CONCENTRATION, True)
-    vs.set_layer(VoxSym.LAYER_CHARGE, True)
-    vs.set_active_scalar_layer("charge")
+    vs.set_layer(VoxSym.LAYER_ELECTRIC_FIELD, True)
+    vs.set_active_scalar_layer("ion_concentration")
     vs.auto_camera()
     vs.opacity = 0.4
 

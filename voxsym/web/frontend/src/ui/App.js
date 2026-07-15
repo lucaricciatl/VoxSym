@@ -77,6 +77,7 @@ export class App {
   mount() {
     this.root.innerHTML = `
       <header id="topbar">
+        <button class="panel-toggle" id="panel-toggle" title="Toggle panel">☰</button>
         <nav class="topnav">
           <button class="nav-item" data-menu="simulation">Simulation</button>
           <button class="nav-item" data-menu="files">Files</button>
@@ -129,6 +130,7 @@ export class App {
 
     this._bindTopNav();
     this._bindViewportControls();
+    this._bindPanelToggle();
     this._bindViewportClick();
 
     this._openMenu('layers');
@@ -147,6 +149,9 @@ export class App {
       if (patch.time !== undefined || patch.frame !== undefined) {
         const timeEl = this.root.querySelector('#sim-time');
         if (timeEl) timeEl.textContent = formatTime(state.time);
+      }
+      if (patch.shadowEnabled !== undefined) {
+        this.scene?.setShadowEnabled(state.shadowEnabled);
       }
       if (patch.showGrid !== undefined || patch.showAxes !== undefined) {
         this._updateSceneHelpers(state.showGrid, state.showAxes);
@@ -200,7 +205,7 @@ export class App {
     if (!payload || payload.type !== 'frame') return;
     window.lastFrame = payload;
     updateVoxels(this.scene, payload);
-    const arrowCount = updateArrows(this.scene, payload.arrows);
+    const arrowCount = updateArrows(this.scene, payload.arrows, this.store.state.shadowEnabled);
     this.store.setFrameMeta({
       time: payload.time ?? 0,
       frame: payload.frame_index ?? 0,
@@ -268,6 +273,9 @@ export class App {
     if (patch.stepsPerFrame !== undefined) {
       this.ws.send({ cmd: 'set_time_scale', value: state.stepsPerFrame });
     }
+    if (patch.emFieldPeriod !== undefined) {
+      this.ws.send({ cmd: 'set_em_field_period', value: state.emFieldPeriod });
+    }
     if (patch.timeStep !== undefined) {
       this.ws.send({ cmd: 'set_time_step', value: state.timeStep });
     }
@@ -277,6 +285,9 @@ export class App {
     if (patch.showGrid !== undefined || patch.showAxes !== undefined) {
       this._updateSceneHelpers(state.showGrid, state.showAxes);
     }
+    if (patch.shadowEnabled !== undefined) {
+      this.scene?.setShadowEnabled(state.shadowEnabled);
+    }
   }
 
   _openMenu(menu) {
@@ -285,6 +296,11 @@ export class App {
     this.root.querySelectorAll('.nav-item').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.menu === menu);
     });
+    const panel = this.root.querySelector('#panel');
+    const isNarrow = window.matchMedia('(max-width: 560px)').matches;
+    if (panel && isNarrow && !panel.classList.contains('open')) {
+      panel.classList.add('open');
+    }
     switch (menu) {
       case 'layers':
         this.layersPanel.renderLayers();
@@ -322,6 +338,7 @@ export class App {
         <div class="btn-stack">
           <button class="btn primary" id="sim-play-pause">${isPlaying ? 'Pause' : 'Play'}</button>
           <button class="btn" id="sim-step"${isPlaying ? ' disabled' : ''}>Step once</button>
+          <button class="btn" id="sim-record" title="Toggle recording">● Record</button>
           <button class="btn" id="sim-reset">Reset simulation</button>
           <button class="btn" id="sim-restart">Restart</button>
         </div>
@@ -340,6 +357,9 @@ export class App {
     });
     this.panelContent.querySelector('#sim-step')?.addEventListener('click', () => {
       if (!this.store.state.playing) this.ws.send({ cmd: 'single_step' });
+    });
+    this.panelContent.querySelector('#sim-record')?.addEventListener('click', () => {
+      this.store.setRecording(!this.store.state.recording);
     });
     this.panelContent.querySelector('#sim-reset')?.addEventListener('click', () => {
       this.store.setPlaying(false);
@@ -512,6 +532,24 @@ export class App {
   _bindTopNav() {
     this.root.querySelectorAll('.nav-item').forEach((btn) => {
       btn.addEventListener('click', () => this._openMenu(btn.dataset.menu));
+    });
+  }
+
+  _bindPanelToggle() {
+    const toggle = this.root.querySelector('#panel-toggle');
+    const panel = this.root.querySelector('#panel');
+    if (!toggle || !panel) return;
+    toggle.addEventListener('click', () => {
+      panel.classList.toggle('open');
+    });
+    // Close panel when clicking a nav item on narrow screens; _openMenu will
+    // reopen it with the new content, which gives an explicit "menu switch"
+    // behavior. Instead, close when clicking outside the panel.
+    const viewport = this.root.querySelector('#viewport');
+    viewport?.addEventListener('pointerdown', () => {
+      if (window.matchMedia('(max-width: 560px)').matches && panel.classList.contains('open')) {
+        panel.classList.remove('open');
+      }
     });
   }
 
