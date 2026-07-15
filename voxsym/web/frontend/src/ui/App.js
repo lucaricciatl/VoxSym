@@ -207,19 +207,8 @@ export class App {
       voxelCount: payload.voxels?.count ?? 0,
       arrowCount,
     });
-    // Keep playback indicator in sync with the server.  Full frames can be
-    // queued before the server processed a play/pause command, so we ignore
-    // stale playing mismatches for a short window after a local toggle.
-    // Authoritative state messages bypass this guard entirely and update
-    // the store directly; this guard only catches full-frame races.
     if (payload.playing !== undefined && payload.playing !== this.store.state.playing) {
-      const recentToggle = this._lastPlayToggle && (performance.now() - this._lastPlayToggle) < 1000;
-      if (!recentToggle) {
-        this.store.setPlaying(payload.playing);
-      }
-    }
-    if (this._lastPlayToggle && (performance.now() - this._lastPlayToggle) >= 1000) {
-      this._lastPlayToggle = undefined;
+      this.store.setPlayingRemote(payload.playing);
     }
     this.store.setScalarMeta({
       scalarRange: payload.scalar_range,
@@ -282,7 +271,7 @@ export class App {
     if (patch.timeStep !== undefined) {
       this.ws.send({ cmd: 'set_time_step', value: state.timeStep });
     }
-    if (patch.playing !== undefined) {
+    if (patch.playing !== undefined && !patch.remote) {
       this.ws.send({ cmd: state.playing ? 'play' : 'pause' });
     }
     if (patch.showGrid !== undefined || patch.showAxes !== undefined) {
@@ -347,7 +336,6 @@ export class App {
       </section>
     `;
     this.panelContent.querySelector('#sim-play-pause')?.addEventListener('click', () => {
-      this._lastPlayToggle = performance.now();
       this.store.setPlaying(!this.store.state.playing);
     });
     this.panelContent.querySelector('#sim-step')?.addEventListener('click', () => {

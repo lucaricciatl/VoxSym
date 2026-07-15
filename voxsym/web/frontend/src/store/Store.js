@@ -175,6 +175,12 @@ export class Store {
     this._notify({ playing: value });
   }
 
+  setPlayingRemote(value) {
+    if (this.state.playing === value) return;
+    this.state.playing = value;
+    this._notify({ playing: value, remote: true });
+  }
+
   setRecording(value) {
     if (this.state.recording === value) return;
     this.state.recording = value;

@@ -37,9 +37,10 @@ export class WebSocketClient {
       } else if (data.type === 'state') {
         // Authoritative real-time state update from the server; apply
         // immediately so the UI never flips back due to stale frames.
+        // Use the remote setter so the UI does not echo the state back
+        // as a new play/pause command.
         if (data.playing !== undefined) {
-          console.log('[WS] state', data.playing);
-          this.store.setPlaying(data.playing);
+          this.store.setPlayingRemote(data.playing);
         }
       } else if (this.onFrame) {
         this.onFrame(data);

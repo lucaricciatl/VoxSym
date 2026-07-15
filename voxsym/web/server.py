@@ -167,13 +167,13 @@ class WebGLServer:
             pass
 
     def broadcast_state_patch(self, **fields) -> None:
-        """Send a lightweight state update to every connected client.
-
-        Unlike broadcast_frame, this does not include voxel data and is
-        authoritative: it is emitted immediately when play/pause/stop is
-        applied so the UI stays aligned with the engine even while a long
-        physics step is still running.
-        """
+        """Send a lightweight, deduplicated state update to every client."""
+        if not fields:
+            return
+        key = tuple(sorted(fields.items()))
+        if getattr(self, "_last_state_patch", None) == key:
+            return
+        self._last_state_patch = key
         message = json.dumps({"type": "state", **fields})
         with self._lock:
             clients = list(self._clients)
@@ -244,17 +244,12 @@ class WebGLServer:
             # flags and can be applied immediately with no blocking.
             if cmd.cmd == "play":
                 vs.play()
-                self._reply(client, "success", "Playing")
-                # Push the new play state immediately so the UI flips even if
-                # the simulation thread is in the middle of a long step.
-                self.broadcast_state_patch(playing=True)
+                self.broadcast_state_patch(playing=bool(vs.is_playing()))
             elif cmd.cmd == "pause":
                 vs.pause()
-                self._reply(client, "success", "Paused")
-                self.broadcast_state_patch(playing=False)
+                self.broadcast_state_patch(playing=bool(vs.is_playing()))
             elif cmd.cmd == "stop":
                 vs.stop()
-                self._reply(client, "success", "Stopped")
                 self.broadcast_state_patch(playing=False)
             elif cmd.cmd == "get_config":
                 client.write_message(json.dumps({"type": "config", **vs.get_config()}))
@@ -270,15 +265,9 @@ class WebGLServer:
                 # WebSocket IOLoop never blocks on physics/rendering work.
                 payload = {k: v for k, v in vars(cmd).items() if v is not None and k != "cmd"}
                 vs.schedule_command(cmd.cmd, **payload)
-                # Provide immediate feedback for commands that previously had a toast.
-                if cmd.cmd == "reset":
-                    self._reply(client, "success", "Simulation reset")
-                elif cmd.cmd == "single_step":
-                    self._reply(client, "success", "Advanced one step")
-                elif cmd.cmd == "restart":
-                    self._reply(client, "success", "Restarted")
         except Exception as exc:
             logging.warning("Error handling command %r: %s", cmd.cmd, exc)
+            self._reply(client, "error", f"Command failed: {exc}")
 
     # ------------------------------------------------------------------
     # Command handling (legacy synchronous helpers kept for tests / scripts)
